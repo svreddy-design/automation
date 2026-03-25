@@ -1,0 +1,4 @@
+last_name,first_name,middle_initial,preferred_name,gender,dob,ssn,address,city,state,zip,phone
+Doe,John,A,,Male,01/15/1990,123456789,123 Main St,Austin,TX,78701,5125551234
+Smith,Jane,,,Female,03/22/1985,,456 Oak Ave,Dallas,TX,75201,2145559876
+Johnson,Robert,B,Bob,Male,07/04/1975,987654321,789 Elm Rd,Houston,TX,77001,7135557890

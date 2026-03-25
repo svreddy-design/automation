@@ -1,3 +1,359 @@
+# OpenDental Automation Agent Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Enhance the Practice Management Bot PRO to enter 12 demographic fields into OpenDental, support CSV batch import, and provide clean project structure with CLAUDE.md.
+
+**Architecture:** Extract OpenDental automation logic from app.py into `core/` package. Patient dataclass handles validation. Shared field entry function used by both PyWinAuto and PyAutoGUI engines. GUI expanded with scrollable form for all demographics.
+
+**Tech Stack:** Python 3.8+, CustomTkinter, PyAutoGUI, PyWinAuto (Windows), csv stdlib
+
+**Spec:** `docs/superpowers/specs/2026-03-25-opendental-automation-agent-design.md`
+
+---
+
+## File Structure
+
+| File | Action | Responsibility |
+|------|--------|---------------|
+| `core/__init__.py` | Create | Package init, exports |
+| `core/patient.py` | Create | Patient dataclass + validation |
+| `core/csv_import.py` | Create | CSV reader, batch_log writer, resume logic |
+| `core/opendental.py` | Create | OpenDental navigation, field entry, window management |
+| `app.py` | Modify | Enhanced GUI with 12 fields, CSV import button, use core/ modules |
+| `CLAUDE.md` | Create | Project documentation for Claude |
+| `sample_patients.csv` | Create | Example CSV template |
+| `requirements.txt` | No change | Already has all needed deps (csv is stdlib) |
+
+---
+
+### Task 1: Create Patient Data Model (`core/patient.py`)
+
+**Files:**
+- Create: `core/__init__.py`
+- Create: `core/patient.py`
+
+- [ ] **Step 1: Create `core/__init__.py`**
+
+```python
+# core/__init__.py - empty init
+```
+
+- [ ] **Step 2: Create `core/patient.py` with Patient dataclass and validation**
+
+```python
+from dataclasses import dataclass, field, fields, asdict
+import re
+
+FIELD_ORDER = [
+    "last_name", "first_name", "middle_initial", "preferred_name",
+    "gender", "dob", "ssn", "address", "city", "state", "zip", "phone"
+]
+
+GENDER_MAP = {"male": 0, "female": 1, "unknown": 2}
+
+@dataclass
+class Patient:
+    last_name: str = ""
+    first_name: str = ""
+    middle_initial: str = ""
+    preferred_name: str = ""
+    gender: str = ""
+    dob: str = ""
+    ssn: str = ""
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    zip: str = ""
+    phone: str = ""
+
+    def validate(self):
+        """Validate fields. Returns (is_valid, errors) tuple.
+        is_valid is False only if required fields are missing.
+        errors list contains warnings for invalid optional fields."""
+        errors = []
+        if not self.last_name.strip():
+            errors.append("last_name is required")
+        if not self.first_name.strip():
+            errors.append("first_name is required")
+        if self.middle_initial and len(self.middle_initial) > 1:
+            errors.append("middle_initial must be single character")
+            self.middle_initial = self.middle_initial[0]
+        if self.gender and self.gender.lower() not in GENDER_MAP:
+            errors.append(f"gender '{self.gender}' invalid, must be Male/Female/Unknown")
+            self.gender = ""
+        if self.dob and not re.match(r'^\d{2}/\d{2}/\d{4}$', self.dob):
+            errors.append(f"dob '{self.dob}' invalid, must be MM/DD/YYYY")
+            self.dob = ""
+        if self.ssn and not re.match(r'^\d{9}$', self.ssn):
+            errors.append(f"ssn invalid, must be 9 digits")
+            self.ssn = ""
+        if self.state and not re.match(r'^[A-Z]{2}$', self.state.upper()):
+            errors.append(f"state '{self.state}' invalid, must be 2-letter code")
+            self.state = ""
+        if self.zip and not re.match(r'^\d{5}$', self.zip):
+            errors.append(f"zip '{self.zip}' invalid, must be 5 digits")
+            self.zip = ""
+        if self.phone and not re.match(r'^\d{10}$', self.phone):
+            errors.append(f"phone '{self.phone}' invalid, must be 10 digits")
+            self.phone = ""
+
+        has_required = bool(self.last_name.strip() and self.first_name.strip())
+        return has_required, errors
+
+    def to_dict(self):
+        return asdict(self)
+```
+
+- [ ] **Step 3: Verify file runs without import errors**
+
+Run: `cd /Users/srivardhanreddygutta/automation && python -c "from core.patient import Patient, FIELD_ORDER, GENDER_MAP; p = Patient(last_name='Doe', first_name='John'); print(p.validate())"`
+Expected: `(True, [])`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add core/__init__.py core/patient.py
+git commit -m "feat: add Patient dataclass with validation in core/patient.py"
+```
+
+---
+
+### Task 2: Create CSV Import Module (`core/csv_import.py`)
+
+**Files:**
+- Create: `core/csv_import.py`
+- Create: `sample_patients.csv`
+
+- [ ] **Step 1: Create `core/csv_import.py`**
+
+```python
+import csv
+import os
+from core.patient import Patient, FIELD_ORDER
+
+def read_patients_csv(filepath):
+    """Read patients from CSV file. Returns list of (row_number, Patient, errors) tuples."""
+    results = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for i, row in enumerate(reader, start=1):
+            patient = Patient(
+                last_name=row.get('last_name', '').strip(),
+                first_name=row.get('first_name', '').strip(),
+                middle_initial=row.get('middle_initial', '').strip(),
+                preferred_name=row.get('preferred_name', '').strip(),
+                gender=row.get('gender', '').strip(),
+                dob=row.get('dob', '').strip(),
+                ssn=row.get('ssn', '').strip(),
+                address=row.get('address', '').strip(),
+                city=row.get('city', '').strip(),
+                state=row.get('state', '').strip(),
+                zip=row.get('zip', '').strip(),
+                phone=row.get('phone', '').strip(),
+            )
+            is_valid, errors = patient.validate()
+            results.append((i, patient, is_valid, errors))
+    return results
+
+
+def load_batch_log(log_path):
+    """Load previously completed rows from batch_log.csv. Returns set of completed row numbers."""
+    completed = set()
+    if not os.path.exists(log_path):
+        return completed
+    with open(log_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get('status') == 'success':
+                completed.add(int(row['row_number']))
+    return completed
+
+
+def write_batch_log_entry(log_path, row_number, last_name, first_name, status, error=""):
+    """Append a single entry to batch_log.csv. Never logs SSN."""
+    file_exists = os.path.exists(log_path)
+    with open(log_path, 'a', encoding='utf-8', newline='') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(['row_number', 'last_name', 'first_name', 'status', 'error'])
+        writer.writerow([row_number, last_name, first_name, status, error])
+```
+
+- [ ] **Step 2: Create `sample_patients.csv`**
+
+```csv
+last_name,first_name,middle_initial,preferred_name,gender,dob,ssn,address,city,state,zip,phone
+Doe,John,A,,Male,01/15/1990,123456789,123 Main St,Austin,TX,78701,5125551234
+Smith,Jane,,,Female,03/22/1985,,456 Oak Ave,Dallas,TX,75201,2145559876
+Johnson,Robert,B,Bob,Male,07/04/1975,987654321,789 Elm Rd,Houston,TX,77001,7135557890
+```
+
+- [ ] **Step 3: Verify CSV import works**
+
+Run: `cd /Users/srivardhanreddygutta/automation && python -c "from core.csv_import import read_patients_csv; rows = read_patients_csv('sample_patients.csv'); print(f'{len(rows)} patients loaded'); print(rows[0])"`
+Expected: `3 patients loaded` and first patient tuple
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add core/csv_import.py sample_patients.csv
+git commit -m "feat: add CSV import module with batch logging and sample data"
+```
+
+---
+
+### Task 3: Create OpenDental Automation Engine (`core/opendental.py`)
+
+**Files:**
+- Create: `core/opendental.py`
+
+- [ ] **Step 1: Create `core/opendental.py` with shared field entry logic**
+
+```python
+import pyautogui
+import time
+import json
+import os
+from core.patient import Patient, FIELD_ORDER, GENDER_MAP
+
+DEFAULT_TIMING = {
+    "typing_interval_ms": 50,
+    "field_delay_ms": 500,
+    "app_load_delay_s": 7,
+    "login_delay_s": 6,
+    "batch_patient_delay_s": 3,
+}
+
+def load_timing(config_path="config.json"):
+    """Load timing config, merging with defaults."""
+    timing = dict(DEFAULT_TIMING)
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                data = json.load(f)
+                for key in DEFAULT_TIMING:
+                    if key in data:
+                        timing[key] = data[key]
+        except (json.JSONDecodeError, IOError):
+            pass
+    return timing
+
+
+def navigate_to_add_patient(status_callback, timing):
+    """Navigate from OpenDental main screen to the Add Patient form.
+    status_callback(text, color) updates the GUI status bar."""
+    status_callback("Bypassing Open Dental Login...", "yellow")
+    pyautogui.press('enter')
+    time.sleep(timing["login_delay_s"])
+
+    status_callback("Opening 'Select Patient'...", "yellow")
+    pyautogui.hotkey('ctrl', 's')
+    time.sleep(2)
+
+    status_callback("Clicking 'Add Pt'...", "yellow")
+    pyautogui.hotkey('alt', 'a')
+    time.sleep(2)
+
+
+def load_tab_order(config_path="config.json"):
+    """Load tab order from config. Falls back to FIELD_ORDER default."""
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                data = json.load(f)
+                order = data.get("tab_order", None)
+                if order and isinstance(order, list):
+                    return order
+        except (json.JSONDecodeError, IOError):
+            pass
+    return list(FIELD_ORDER)
+
+
+def enter_patient_fields(patient, status_callback, timing, config_path="config.json"):
+    """Type all patient fields into the Add Patient form via Tab navigation.
+    Assumes cursor is on Last Name field. Returns list of field errors."""
+    interval = timing["typing_interval_ms"] / 1000.0
+    delay = timing["field_delay_ms"] / 1000.0
+    field_errors = []
+    tab_order = load_tab_order(config_path)
+
+    for field_name in tab_order:
+        value = getattr(patient, field_name, "")
+
+        # Mask SSN in status display
+        display_value = "***" if field_name == "ssn" and value else value
+
+        if value:
+            status_callback(f"Entering {field_name}: {display_value}", "yellow")
+            try:
+                if field_name == "gender":
+                    # Use arrow keys for dropdown
+                    gender_index = GENDER_MAP.get(value.lower(), -1)
+                    if gender_index >= 0:
+                        for _ in range(gender_index):
+                            pyautogui.press('down')
+                            time.sleep(0.1)
+                elif field_name == "dob":
+                    # Type digits only: MMDDYYYY (OpenDental auto-formats)
+                    digits = value.replace("/", "")
+                    pyautogui.write(digits, interval=interval)
+                else:
+                    pyautogui.write(value, interval=interval)
+            except Exception as e:
+                field_errors.append(f"{field_name}: {e}")
+
+        # Tab to next field
+        pyautogui.press('tab')
+        time.sleep(delay)
+
+    return field_errors
+
+
+def save_patient(status_callback):
+    """Press Enter to save the patient record."""
+    status_callback("Saving Patient Profile...", "yellow")
+    pyautogui.press('enter')
+    time.sleep(2)
+```
+
+- [ ] **Step 2: Verify import works**
+
+Run: `cd /Users/srivardhanreddygutta/automation && python -c "from core.opendental import load_timing, load_tab_order, DEFAULT_TIMING; print(load_timing()); print(load_tab_order())"`
+Expected: prints timing dict and tab order list
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add core/opendental.py
+git commit -m "feat: add OpenDental automation engine with shared field entry logic"
+```
+
+---
+
+### Task 4: Enhance GUI with All Demographic Fields (`app.py`)
+
+**Files:**
+- Modify: `app.py` (full rewrite of GUI section and automation methods)
+
+- [ ] **Step 1: Rewrite `app.py` with expanded form, CSV import, and core/ integration**
+
+Key changes to make to `app.py`:
+1. Add imports: `from core.patient import Patient, FIELD_ORDER` and `from core.opendental import ...` and `from core.csv_import import ...`
+2. Resize window to `650x900`
+3. Replace the 2-field input_frame with a scrollable frame containing all 12 fields
+4. Add gender dropdown using `CTkOptionMenu`
+5. Add SSN entry with `show="*"`
+6. Add State/Zip on same row
+7. Add CSV Import button
+8. Replace inline OpenDental logic in `run_pywinauto()` and `run_pyautogui()` with calls to `core.opendental` functions
+9. Add `get_patient_from_gui()` method to collect all fields into a Patient object
+10. Add `run_csv_batch()` method for batch processing
+11. Enhanced `load_config()` and `save_config()` to handle timing settings
+
+The full replacement `app.py`:
+
+```python
 import customtkinter as ctk
 import pyautogui
 import time
@@ -9,9 +365,9 @@ import json
 from datetime import datetime
 from tkinter import filedialog
 
-from core.patient import Patient
+from core.patient import Patient, FIELD_ORDER
 from core.opendental import (
-    load_timing, navigate_to_add_patient,
+    load_timing, load_tab_order, navigate_to_add_patient,
     enter_patient_fields, save_patient
 )
 from core.csv_import import read_patients_csv, load_batch_log, write_batch_log_entry
@@ -228,6 +584,7 @@ class LegacyAutomationBot(ctk.CTk):
         return "winword"
 
     def save_config(self):
+        # Preserve existing config keys, update app_path
         data = {}
         if os.path.exists(self.config_file):
             try:
@@ -373,6 +730,7 @@ class LegacyAutomationBot(ctk.CTk):
             if "opendental" in app_name.lower():
                 self._run_opendental_entry(patient)
             else:
+                # Fallback: Word document automation (existing behavior)
                 self._run_word_automation(app, patient)
 
         except Exception as e:
@@ -457,10 +815,157 @@ class LegacyAutomationBot(ctk.CTk):
         pyautogui.write(f"Patient_{safe_fn}_{safe_ln}_{timestamp}")
         time.sleep(1)
         pyautogui.press('enter')
-        self.update_status("Document saved!", "limegreen")
+        self.update_status(f"Document saved!", "limegreen")
 
 
 if __name__ == "__main__":
     pyautogui.FAILSAFE = True
     app = LegacyAutomationBot()
     app.mainloop()
+```
+
+- [ ] **Step 2: Verify app.py imports and initializes without error**
+
+Run: `cd /Users/srivardhanreddygutta/automation && python -c "import app; print('app.py imports OK')"`
+Expected: `app.py imports OK` (may fail on macOS if tkinter display isn't available — that's fine, we verify the import chain)
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add app.py
+git commit -m "feat: enhanced GUI with 12 demographic fields, CSV import, and core/ integration"
+```
+
+---
+
+### Task 5: Create CLAUDE.md
+
+**Files:**
+- Create: `CLAUDE.md`
+
+- [ ] **Step 1: Create `CLAUDE.md`**
+
+```markdown
+# OpenDental Automation Agent
+
+## Purpose
+Desktop GUI automation bot for OpenDental dental practice management software.
+Enters patient demographic data via keyboard automation (PyWinAuto + PyAutoGUI).
+
+## Quick Start
+```
+pip install -r requirements.txt
+python app.py
+```
+
+## Architecture
+- `app.py` — CustomTkinter GUI, launches automation threads
+- `core/opendental.py` — OpenDental navigation + field entry logic
+- `core/patient.py` — Patient dataclass with validation
+- `core/csv_import.py` — CSV reader for batch import with resume support
+
+## How Automation Works
+1. Launch OpenDental via configured path
+2. Bypass Admin login (Enter key)
+3. Ctrl+S to open Select Patient, Alt+A to Add Patient
+4. Tab through 12 fields, type values via pyautogui
+5. Enter to save
+
+## Patient Fields
+last_name*, first_name*, middle_initial, preferred_name, gender, dob, ssn, address, city, state, zip, phone
+
+## CSV Batch Import
+- Use `sample_patients.csv` as template
+- Headers must match field keys exactly
+- Results logged to `batch_log.csv` (resumes on re-run)
+- SSN never appears in logs
+
+## Config (`config.json`)
+- `app_path` — path to OpenDental executable
+- `typing_interval_ms` — delay between keystrokes (default: 50)
+- `field_delay_ms` — delay between fields (default: 500)
+- `app_load_delay_s` — wait for app launch (default: 7)
+- `login_delay_s` — wait after login bypass (default: 6)
+- `batch_patient_delay_s` — delay between patients in batch (default: 3)
+
+## Conventions
+- All timing delays are configurable in config.json
+- Both engines (PyWinAuto/PyAutoGUI) share the same field entry logic in `core/opendental.py`
+- PyWinAuto handles window management; PyAutoGUI handles keystrokes
+- Windows-only for PyWinAuto; PyAutoGUI works cross-platform
+- SSN is masked in GUI (`show="*"`) and excluded from all logs
+
+## Build
+```
+pyinstaller --noconsole --onefile --windowed --name "PracticeManagementBotPRO" app.py
+```
+
+## Testing
+- Verify on Windows with OpenDental installed
+- Use sample_patients.csv for batch testing
+- Check batch_log.csv for results
+```
+
+- [ ] **Step 2: Verify CLAUDE.md exists and has correct header**
+
+Run: `cd /Users/srivardhanreddygutta/automation && head -3 CLAUDE.md`
+Expected: `# OpenDental Automation Agent`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add CLAUDE.md
+git commit -m "docs: add CLAUDE.md with project architecture and conventions"
+```
+
+---
+
+### Task 6: Create Sample CSV and Verify Full Pipeline
+
+**Files:**
+- Verify: `sample_patients.csv` (created in Task 2)
+- Verify: all imports work end-to-end
+
+- [ ] **Step 1: Verify full import chain**
+
+Run: `cd /Users/srivardhanreddygutta/automation && python -c "
+from core.patient import Patient, FIELD_ORDER, GENDER_MAP
+from core.csv_import import read_patients_csv, load_batch_log, write_batch_log_entry
+from core.opendental import load_timing, navigate_to_add_patient, enter_patient_fields, save_patient
+
+# Test patient creation + validation
+p = Patient(last_name='Test', first_name='User', dob='01/01/2000', gender='Male', ssn='123456789')
+valid, errors = p.validate()
+print(f'Patient valid: {valid}, errors: {errors}')
+
+# Test CSV read
+rows = read_patients_csv('sample_patients.csv')
+print(f'CSV rows: {len(rows)}')
+
+# Test timing
+t = load_timing()
+print(f'Timing keys: {list(t.keys())}')
+
+print('All modules OK!')
+"`
+
+Expected: All prints succeed, `All modules OK!`
+
+- [ ] **Step 2: Commit any fixes if needed**
+
+---
+
+### Task 7: Save Memory and Final Cleanup
+
+- [ ] **Step 1: Save project memory**
+
+Write a memory file at `~/.claude/projects/-Users-srivardhanreddygutta-automation/memory/project_opendental.md` documenting:
+- This is an OpenDental desktop automation project
+- Uses core/ package for automation logic
+- PyWinAuto for Windows window management, PyAutoGUI for keystrokes
+- CSV batch import with batch_log.csv resume
+- Config in config.json with timing settings
+
+- [ ] **Step 2: Final git status check**
+
+Run: `git status` to verify clean working tree with all files committed.

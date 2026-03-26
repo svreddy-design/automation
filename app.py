@@ -468,12 +468,40 @@ class LegacyAutomationBot(ctk.CTk):
                 except (json.JSONDecodeError, IOError):
                     pass
 
+            self.update_status("Step 1/3: Validating patient data...", "yellow")
+            time.sleep(0.3)
+
+            self.update_status("Step 2/3: Inserting into database...", "yellow")
             result = insert_patient(patient, self.update_status, db_config)
+
             if result:
                 self.update_status(
-                    f"Patient #{result} saved to database! Open OpenDental to verify.",
+                    f"Step 3/3: Patient #{result} {patient.first_name} {patient.last_name} saved!",
                     "limegreen"
                 )
+
+                # Auto-open OpenDental if on Windows
+                if platform.system() == "Windows":
+                    time.sleep(1)
+                    self.update_status("Opening OpenDental to show the patient...", "cyan")
+                    try:
+                        app_path = self.app_path
+                        if os.path.exists(app_path):
+                            subprocess.Popen([app_path])
+                            self.update_status(
+                                f"DONE! Patient #{result} saved. Search '{patient.last_name}' in OpenDental.",
+                                "limegreen"
+                            )
+                        else:
+                            self.update_status(
+                                f"DONE! Patient #{result} saved. Open OpenDental and search '{patient.last_name}'.",
+                                "limegreen"
+                            )
+                    except Exception:
+                        self.update_status(
+                            f"DONE! Patient #{result} saved. Open OpenDental and search '{patient.last_name}'.",
+                            "limegreen"
+                        )
         except Exception as e:
             self.update_status(f"DB Error: {e}", "red")
         finally:

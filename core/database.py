@@ -116,6 +116,14 @@ def insert_patient(patient, status_callback, db_config=None):
         conn.commit()
         patient_num = cursor.lastrowid
 
+        # Fix: OpenDental requires Guarantor = PatNum for head-of-household
+        status_callback("Setting guarantor...", "yellow")
+        cursor.execute(
+            "UPDATE patient SET Guarantor = %s WHERE PatNum = %s",
+            (patient_num, patient_num)
+        )
+        conn.commit()
+
         status_callback(f"Patient #{patient_num} saved: {patient.first_name} {patient.last_name}", "limegreen")
 
         cursor.close()

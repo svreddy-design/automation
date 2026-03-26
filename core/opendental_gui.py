@@ -1,14 +1,14 @@
 """Smart OpenDental GUI automation.
-The bot checks what window is showing and decides what to do.
-Handles every popup, dialog, and screen intelligently."""
+The bot checks what's on screen AFTER every action to verify it worked.
+If something fails, it retries or stops with a clear error."""
 
 import time
 import sys
 import os
 
 
-def what_am_i_looking_at(app):
-    """Check the current top window and return what screen we're on."""
+def identify_screen(app):
+    """Identify what screen/dialog is currently showing."""
     try:
         win = app.top_window()
         title = win.window_text()
@@ -20,205 +20,96 @@ def what_am_i_looking_at(app):
             return "choose_database", win
         if "Alert" in title:
             return "alerts", win
-        if "Trial" in title:
-            return "trial_popup", win
         if "Select Patient" in title:
             return "select_patient", win
         if "Edit Patient" in title:
             return "edit_patient", win
+
+        # Small window = popup dialog
+        if width < 600 and height < 400 and width > 50:
+            return "popup", win
+
+        # Main OpenDental window
         if "Open Dental" in title or "Demo Database" in title:
-            # Could be main window OR a small popup on top
-            if width < 500 and height < 300:
-                return "small_popup", win
             return "main_window", win
 
-        # Unknown small dialog
-        if width < 600 and height < 400:
-            return "unknown_popup", win
-
         return "unknown", win
-
     except Exception:
         return "error", None
 
 
-def handle_screen(screen_type, win, patient, status_callback, app, edits_cache):
-    """Take action based on what screen we're looking at."""
+def wait_for_screen(app, expected, status_callback, timeout=15):
+    """Wait until we see the expected screen. Returns (screen_type, window) or None."""
+    start = time.time()
+    while time.time() - start < timeout:
+        screen, win = identify_screen(app)
+
+        if screen == expected:
+            return screen, win
+
+        # Auto-dismiss popups while waiting
+        if screen in ("popup", "choose_database", "alerts"):
+            dismiss_current(screen, win, status_callback)
+            # Reconnect after dismiss
+            time.sleep(2)
+            try:
+                app = reconnect(app)
+            except Exception:
+                pass
+            continue
+
+        time.sleep(1)
+
+    return None, None
+
+
+def dismiss_current(screen, win, status_callback):
+    """Dismiss whatever popup/dialog is showing."""
     import pyautogui
 
-    if screen_type == "choose_database":
-        status_callback("  [BRAIN] See: Choose Database → clicking OK", "cyan")
+    if screen == "choose_database":
+        status_callback("  [AUTO] Dismissing Choose Database...", "cyan")
         try:
-            ok_btn = win.child_window(title="OK", control_type="Button")
-            ok_btn.click_input()
+            ok = win.child_window(title="OK", control_type="Button")
+            ok.click_input()
         except Exception:
             pyautogui.press('enter')
-        time.sleep(5)
-        return "continue"
+        time.sleep(3)
 
-    elif screen_type == "alerts":
-        status_callback("  [BRAIN] See: Alerts → clicking Acknowledge", "cyan")
+    elif screen == "alerts":
+        status_callback("  [AUTO] Dismissing Alerts...", "cyan")
         try:
             ack = win.child_window(title="Acknowledge", control_type="Button")
             ack.click_input()
         except Exception:
             pyautogui.press('enter')
         time.sleep(2)
-        return "continue"
 
-    elif screen_type in ("trial_popup", "small_popup", "unknown_popup"):
-        status_callback(f"  [BRAIN] See: Popup ({win.window_text()[:30]}) → dismissing", "cyan")
-        pyautogui.press('enter')
-        time.sleep(1)
-        return "continue"
-
-    elif screen_type == "main_window":
-        return "at_main"
-
-    elif screen_type == "select_patient":
-        return "at_select_patient"
-
-    elif screen_type == "edit_patient":
-        return "at_edit_patient"
-
-    else:
-        status_callback(f"  [BRAIN] See: Unknown window ({win.window_text()[:30]})", "orange")
-        pyautogui.press('enter')
-        time.sleep(1)
-        return "continue"
-
-
-def fill_patient_form(win, patient, status_callback):
-    """Fill all fields in the Edit Patient Information form."""
-    import pyautogui
-
-    # Get all edit controls in the form
-    edits = []
-    try:
-        edits = win.descendants(control_type="Edit")
-        status_callback(f"  Found {len(edits)} fields in form", "cyan")
-    except Exception:
-        status_callback("  WARNING: Could not find form fields", "orange")
-
-    def fill_by_name(name, value, display_name=None):
-        """Try to fill a field by its automation name."""
-        if not value:
-            return True
-        disp = "***" if "SS" in name else value
-        if display_name:
-            disp_name = display_name
-        else:
-            disp_name = name
-
-        # Strategy 1: Search edits by name
-        for edit in edits:
-            try:
-                ename = edit.element_info.name or ""
-                if name in ename:
-                    edit.click_input()
-                    time.sleep(0.1)
-                    edit.set_edit_text(value)
-                    status_callback(f"  {disp_name} = {disp}", "yellow")
-                    return True
-            except Exception:
-                continue
-
-        # Strategy 2: Try child_window
+    elif screen == "popup":
+        title = ""
         try:
-            edit = win.child_window(title=name, control_type="Edit")
-            edit.click_input()
-            time.sleep(0.1)
-            edit.set_edit_text(value)
-            status_callback(f"  {disp_name} = {disp}", "yellow")
-            return True
+            title = win.window_text()[:40]
         except Exception:
             pass
-
-        status_callback(f"  {disp_name}: field not found (skipped)", "orange")
-        return False
-
-    # Fill each field
-    fill_by_name("Last Name", patient.last_name)
-    time.sleep(0.2)
-    fill_by_name("First Name", patient.first_name)
-    time.sleep(0.2)
-
-    if patient.middle_initial:
-        fill_by_name("Middle Initial", patient.middle_initial, "Middle Initial")
-        time.sleep(0.2)
-
-    # Gender — click in list
-    if patient.gender:
-        try:
-            items = win.descendants(control_type="ListItem")
-            for item in items:
-                if item.window_text() == patient.gender:
-                    item.click_input()
-                    status_callback(f"  Gender = {patient.gender}", "yellow")
-                    break
-        except Exception:
-            status_callback("  Gender: could not select", "orange")
-
-    if patient.dob:
-        fill_by_name("Birthdate", patient.dob)
-        time.sleep(0.2)
-
-    # Right side fields
-    fill_by_name("Home Phone", patient.phone)
-    time.sleep(0.2)
-    fill_by_name("Address", patient.address)
-    time.sleep(0.2)
-    fill_by_name("City", patient.city)
-    time.sleep(0.2)
-    fill_by_name("ST", patient.state)
-    time.sleep(0.2)
-
-    # Zip might be combo
-    if patient.zip:
-        filled = fill_by_name("Zip", patient.zip)
-        if not filled:
-            try:
-                combo = win.child_window(title="Zip", control_type="ComboBox")
-                combo.click_input()
-                pyautogui.write(patient.zip, interval=0.03)
-                status_callback(f"  Zip = {patient.zip}", "yellow")
-            except Exception:
-                pass
-
-    if patient.ssn:
-        fill_by_name("SS#", patient.ssn, "SSN")
-
-    return True
+        status_callback(f"  [AUTO] Dismissing popup: {title}", "cyan")
+        pyautogui.press('enter')
+        time.sleep(1)
 
 
-def click_save(win, status_callback):
-    """Find and click the Save button."""
-    import pyautogui
-
-    # Strategy 1: Find by name
+def reconnect(app):
+    """Reconnect to OpenDental after a window change."""
+    from pywinauto import Application
     try:
-        buttons = win.descendants(control_type="Button")
-        for btn in buttons:
-            if btn.window_text() == "Save":
-                btn.click_input()
-                return True
+        return Application(backend="uia").connect(
+            title_re=".*Open Dental.*|.*Demo Database.*|.*Select Patient.*|.*Edit Patient.*",
+            timeout=10
+        )
     except Exception:
-        pass
-
-    # Strategy 2: Bottom-right corner of window
-    try:
-        rect = win.rectangle()
-        pyautogui.click(rect.right - 60, rect.bottom - 30)
-        return True
-    except Exception:
-        pass
-
-    status_callback("  WARNING: Could not find Save button", "orange")
-    return False
+        return app
 
 
 def automate_patient_entry(patient, status_callback, config=None):
-    """Smart automation: checks what's on screen, decides what to do."""
+    """Smart automation with verification at every step."""
     if sys.platform != "win32":
         status_callback("ERROR: Requires Windows!", "red")
         return False
@@ -231,69 +122,89 @@ def automate_patient_entry(patient, status_callback, config=None):
     app_path = timing.get("app_path", r"C:\Program Files (x86)\Open Dental\OpenDental.exe")
 
     try:
-        # ═══ PHASE 1: Get OpenDental Running ═══
-        status_callback("[PHASE 1] Getting OpenDental running...", "yellow")
+        # ═══ STEP 1: Connect or Launch ═══
+        status_callback("[1/6] Finding OpenDental...", "yellow")
 
         app = None
         try:
-            app = Application(backend="uia").connect(title_re=".*Open Dental.*|.*Demo Database.*", timeout=3)
-            status_callback("[PHASE 1] OpenDental is running!", "limegreen")
+            app = Application(backend="uia").connect(
+                title_re=".*Open Dental.*|.*Demo Database.*", timeout=3
+            )
+            status_callback("[1/6] DONE — Connected!", "limegreen")
         except Exception:
             if not os.path.exists(app_path):
-                status_callback(f"ERROR: {app_path} not found", "red")
+                status_callback(f"[1/6] FAILED — {app_path} not found!", "red")
                 return False
-            status_callback("[PHASE 1] Launching OpenDental...", "yellow")
+
+            status_callback("[1/6] Launching OpenDental (wait 12s)...", "yellow")
             os.startfile(app_path)
             time.sleep(12)
-            try:
-                app = Application(backend="uia").connect(title_re=".*Open Dental.*|.*Demo Database.*", timeout=20)
-            except Exception:
-                status_callback("ERROR: OpenDental failed to start", "red")
-                return False
-            status_callback("[PHASE 1] OpenDental launched!", "limegreen")
 
-        # ═══ PHASE 2: Navigate to Main Window ═══
-        status_callback("[PHASE 2] Navigating to main screen...", "yellow")
-
-        # Keep handling whatever we see until we reach the main window
-        max_attempts = 15
-        for attempt in range(max_attempts):
-            screen, win = what_am_i_looking_at(app)
-            status_callback(f"  [BRAIN] Screen: {screen} (attempt {attempt+1})", "cyan")
-
-            result = handle_screen(screen, win, patient, status_callback, app, None)
-
-            if result == "at_main":
-                status_callback("[PHASE 2] At main window!", "limegreen")
-                break
-            elif result == "at_select_patient":
-                status_callback("[PHASE 2] Already at Select Patient!", "limegreen")
-                break
-            elif result == "at_edit_patient":
-                status_callback("[PHASE 2] Already at Edit Patient!", "limegreen")
-                break
-
-            # After handling, reconnect in case window changed
             try:
                 app = Application(backend="uia").connect(
-                    title_re=".*Open Dental.*|.*Demo Database.*|.*Select Patient.*|.*Edit Patient.*",
-                    timeout=5
+                    title_re=".*Open Dental.*|.*Demo Database.*", timeout=20
                 )
             except Exception:
-                pass
+                status_callback("[1/6] FAILED — OpenDental did not start!", "red")
+                return False
 
-        # ═══ PHASE 3: Open Select Patient ═══
-        screen, win = what_am_i_looking_at(app)
+            status_callback("[1/6] DONE — Launched!", "limegreen")
 
-        if screen == "at_edit_patient" or screen == "edit_patient":
-            status_callback("[PHASE 3] Already on Edit Patient form!", "limegreen")
-        elif screen == "at_select_patient" or screen == "select_patient":
-            status_callback("[PHASE 3] Already on Select Patient — clicking Add Pt...", "yellow")
+        # ═══ STEP 2: Get to Main Window ═══
+        status_callback("[2/6] Getting to main screen...", "yellow")
+
+        for attempt in range(20):
+            screen, win = identify_screen(app)
+            status_callback(f"  Attempt {attempt+1}: see '{screen}'", "cyan")
+
+            if screen == "main_window":
+                status_callback("[2/6] DONE — At main screen!", "limegreen")
+                break
+
+            elif screen == "select_patient":
+                status_callback("[2/6] DONE — Already at Select Patient!", "limegreen")
+                break
+
+            elif screen == "edit_patient":
+                status_callback("[2/6] DONE — Already at Edit Patient!", "limegreen")
+                break
+
+            elif screen in ("choose_database", "alerts", "popup"):
+                dismiss_current(screen, win, status_callback)
+                app = reconnect(app)
+                continue
+
+            elif screen == "unknown":
+                # Might be login screen — press Enter
+                status_callback("  Pressing Enter (login?)...", "cyan")
+                pyautogui.press('enter')
+                time.sleep(5)
+                app = reconnect(app)
+                continue
+
+            else:
+                time.sleep(2)
+                app = reconnect(app)
+
         else:
-            status_callback("[PHASE 3] Opening Select Patient...", "yellow")
+            status_callback("[2/6] FAILED — Could not reach main screen after 20 attempts!", "red")
+            return False
+
+        # ═══ STEP 3: Open Select Patient ═══
+        screen, win = identify_screen(app)
+
+        if screen == "edit_patient":
+            status_callback("[3/6] SKIP — Already on Edit Patient form!", "limegreen")
+
+        elif screen == "select_patient":
+            status_callback("[3/6] SKIP — Already on Select Patient!", "limegreen")
+
+        else:
+            status_callback("[3/6] Opening Select Patient...", "yellow")
             win = app.top_window()
             win.set_focus()
 
+            # Click Select Patient
             clicked = False
             try:
                 btn = win.child_window(title="Select Patient", control_type="SplitButton")
@@ -305,98 +216,214 @@ def automate_patient_entry(patient, status_callback, config=None):
                 try:
                     btn = win.child_window(title_re=".*Select Patient.*")
                     btn.click_input()
-                    clicked = True
                 except Exception:
-                    pass
-            if not clicked:
-                pyautogui.hotkey('ctrl', 'p')
+                    pyautogui.hotkey('ctrl', 'p')
 
-            time.sleep(3)
+            time.sleep(2)
 
-            # Handle any popup that appeared
-            screen, win = what_am_i_looking_at(app)
-            while screen in ("trial_popup", "small_popup", "unknown_popup"):
-                handle_screen(screen, win, patient, status_callback, app, None)
-                time.sleep(1)
-                try:
-                    app = Application(backend="uia").connect(
-                        title_re=".*Select Patient.*|.*Open Dental.*",
-                        timeout=5
-                    )
-                except Exception:
-                    pass
-                screen, win = what_am_i_looking_at(app)
+            # Dismiss popups and VERIFY we're at Select Patient
+            for _ in range(5):
+                app = reconnect(app)
+                screen, win = identify_screen(app)
+                if screen == "select_patient":
+                    break
+                elif screen in ("popup", "alerts"):
+                    dismiss_current(screen, win, status_callback)
+                    time.sleep(1)
+                else:
+                    time.sleep(1)
 
-            status_callback("[PHASE 3] Select Patient open!", "limegreen")
+            screen, win = identify_screen(app)
+            if screen == "select_patient":
+                status_callback("[3/6] DONE — Select Patient open!", "limegreen")
+            else:
+                status_callback(f"[3/6] FAILED — Expected Select Patient but see '{screen}'!", "red")
+                return False
 
-        # ═══ PHASE 4: Click Add Pt ═══
-        screen, win = what_am_i_looking_at(app)
+        # ═══ STEP 4: Click Add Pt ═══
+        screen, win = identify_screen(app)
 
-        if screen != "edit_patient":
-            status_callback("[PHASE 4] Clicking Add Pt...", "yellow")
+        if screen == "edit_patient":
+            status_callback("[4/6] SKIP — Already on Edit Patient!", "limegreen")
+        else:
+            status_callback("[4/6] Clicking Add Pt...", "yellow")
+
             sel_win = app.top_window()
-
             added = False
             try:
                 btns = sel_win.descendants(control_type="Button")
                 for btn in btns:
-                    txt = btn.window_text()
-                    if "Add Pt" in txt:
+                    if "Add Pt" in btn.window_text():
                         btn.click_input()
                         added = True
                         break
             except Exception:
                 pass
-
             if not added:
                 pyautogui.hotkey('alt', 'a')
 
-            time.sleep(3)
+            time.sleep(2)
 
-            # Handle popups
-            screen, win = what_am_i_looking_at(app)
-            while screen in ("trial_popup", "small_popup", "unknown_popup"):
-                handle_screen(screen, win, patient, status_callback, app, None)
-                time.sleep(1)
-                try:
-                    app = Application(backend="uia").connect(
-                        title_re=".*Edit Patient.*|.*Open Dental.*",
-                        timeout=5
-                    )
-                except Exception:
-                    pass
-                screen, win = what_am_i_looking_at(app)
+            # Dismiss popups and VERIFY we're at Edit Patient
+            for _ in range(5):
+                app = reconnect(app)
+                screen, win = identify_screen(app)
+                if screen == "edit_patient":
+                    break
+                elif screen in ("popup", "alerts"):
+                    dismiss_current(screen, win, status_callback)
+                    time.sleep(1)
+                else:
+                    time.sleep(1)
 
-        status_callback("[PHASE 4] Edit Patient form ready!", "limegreen")
+            screen, win = identify_screen(app)
+            if screen == "edit_patient":
+                status_callback("[4/6] DONE — Edit Patient form open!", "limegreen")
+            else:
+                status_callback(f"[4/6] FAILED — Expected Edit Patient but see '{screen}'!", "red")
+                return False
 
-        # ═══ PHASE 5: Fill the form ═══
-        status_callback("[PHASE 5] Filling patient form...", "yellow")
+        # ═══ STEP 5: Fill the form ═══
+        status_callback("[5/6] Filling patient form...", "yellow")
 
         edit_win = app.top_window()
         edit_win.set_focus()
         time.sleep(0.5)
 
-        fill_patient_form(edit_win, patient, status_callback)
+        # Get all editable fields
+        edits = []
+        try:
+            edits = edit_win.descendants(control_type="Edit")
+            status_callback(f"  Found {len(edits)} fields", "cyan")
+        except Exception:
+            status_callback("  WARNING: Could not find fields", "orange")
 
-        status_callback("[PHASE 5] Form filled!", "limegreen")
+        def fill_field(name, value, display=None):
+            if not value:
+                return
+            show = "***" if "SS" in name else value
+            if display:
+                show = display
 
-        # ═══ PHASE 6: Save ═══
-        status_callback("[PHASE 6] Saving patient...", "yellow")
+            for edit in edits:
+                try:
+                    ename = edit.element_info.name or ""
+                    if name in ename:
+                        edit.click_input()
+                        time.sleep(0.1)
+                        edit.set_edit_text(value)
+                        status_callback(f"  {name} = {show}", "yellow")
+                        return
+                except Exception:
+                    continue
 
-        saved = click_save(edit_win, status_callback)
+            try:
+                e = edit_win.child_window(title=name, control_type="Edit")
+                e.click_input()
+                time.sleep(0.1)
+                e.set_edit_text(value)
+                status_callback(f"  {name} = {show}", "yellow")
+                return
+            except Exception:
+                pass
+
+            status_callback(f"  {name}: not found (skipped)", "orange")
+
+        fill_field("Last Name", patient.last_name)
+        time.sleep(0.2)
+        fill_field("First Name", patient.first_name)
+        time.sleep(0.2)
+        fill_field("Middle Initial", patient.middle_initial)
+        time.sleep(0.2)
+
+        # Gender
+        if patient.gender:
+            try:
+                items = edit_win.descendants(control_type="ListItem")
+                for item in items:
+                    if item.window_text() == patient.gender:
+                        item.click_input()
+                        status_callback(f"  Gender = {patient.gender}", "yellow")
+                        break
+            except Exception:
+                pass
+
+        fill_field("Birthdate", patient.dob)
+        time.sleep(0.2)
+        fill_field("Home Phone", patient.phone)
+        time.sleep(0.2)
+        fill_field("Address", patient.address)
+        time.sleep(0.2)
+        fill_field("City", patient.city)
+        time.sleep(0.2)
+        fill_field("ST", patient.state)
+        time.sleep(0.2)
+
+        if patient.zip:
+            filled = False
+            for edit in edits:
+                try:
+                    ename = edit.element_info.name or ""
+                    if "Zip" in ename:
+                        edit.click_input()
+                        edit.set_edit_text(patient.zip)
+                        status_callback(f"  Zip = {patient.zip}", "yellow")
+                        filled = True
+                        break
+                except Exception:
+                    continue
+            if not filled:
+                try:
+                    combo = edit_win.child_window(title="Zip", control_type="ComboBox")
+                    combo.click_input()
+                    pyautogui.write(patient.zip, interval=0.03)
+                    status_callback(f"  Zip = {patient.zip}", "yellow")
+                except Exception:
+                    pass
+
+        if patient.ssn:
+            fill_field("SS#", patient.ssn, "***")
+
+        status_callback("[5/6] DONE — Form filled!", "limegreen")
+
+        # ═══ STEP 6: Save ═══
+        status_callback("[6/6] Saving...", "yellow")
+
+        saved = False
+        try:
+            btns = edit_win.descendants(control_type="Button")
+            for btn in btns:
+                if btn.window_text() == "Save":
+                    btn.click_input()
+                    saved = True
+                    break
+        except Exception:
+            pass
+
+        if not saved:
+            try:
+                rect = edit_win.rectangle()
+                pyautogui.click(rect.right - 60, rect.bottom - 30)
+                saved = True
+            except Exception:
+                pass
+
+        if not saved:
+            status_callback("[6/6] FAILED — Could not find Save button!", "red")
+            return False
+
         time.sleep(2)
 
-        # Handle post-save popups
-        screen, win = what_am_i_looking_at(app)
-        if screen in ("trial_popup", "small_popup", "unknown_popup"):
-            handle_screen(screen, win, patient, status_callback, app, None)
+        # Verify save worked — we should NOT be on Edit Patient anymore
+        app = reconnect(app)
+        screen, win = identify_screen(app)
 
-        if saved:
-            status_callback(f"[DONE] {patient.first_name} {patient.last_name} saved in OpenDental!", "limegreen")
-        else:
-            status_callback("[DONE] Form filled but Save may not have clicked. Check OpenDental.", "orange")
+        # Dismiss post-save popups
+        if screen in ("popup", "alerts"):
+            dismiss_current(screen, win, status_callback)
 
-        return saved
+        status_callback(f"[DONE] {patient.first_name} {patient.last_name} saved in OpenDental!", "limegreen")
+        return True
 
     except Exception as e:
         status_callback(f"ERROR: {e}", "red")

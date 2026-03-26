@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Open Dental - Add Patient</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #1a1a2e; color: #eee; }
+        .header { background: #16213e; padding: 12px 20px; border-bottom: 2px solid #0f3460; }
+        .header h1 { font-size: 18px; color: #e94560; }
+        .header span { font-size: 12px; color: #888; }
+        .container { max-width: 700px; margin: 20px auto; padding: 20px; }
+        h2 { color: #e94560; margin-bottom: 15px; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px; }
+        .form-row { display: flex; gap: 15px; margin-bottom: 10px; align-items: center; }
+        label { width: 130px; text-align: right; font-size: 13px; color: #aaa; flex-shrink: 0; }
+        input, select { padding: 6px 10px; border: 1px solid #333; border-radius: 4px; background: #0f3460; color: #fff; font-size: 13px; }
+        input:focus, select:focus { border-color: #e94560; outline: none; }
+        input[type="text"] { width: 220px; }
+        input.short { width: 60px; }
+        input.medium { width: 150px; }
+        select { width: 150px; }
+        .required label::after { content: " *"; color: #e94560; }
+        .btn-row { margin-top: 20px; display: flex; gap: 10px; justify-content: center; }
+        button { padding: 10px 30px; border: none; border-radius: 5px; font-size: 14px; cursor: pointer; font-weight: bold; }
+        .btn-save { background: #e94560; color: #fff; }
+        .btn-save:hover { background: #c73651; }
+        .btn-cancel { background: #333; color: #ccc; }
+        .btn-cancel:hover { background: #444; }
+        .status { margin-top: 15px; padding: 10px; background: #0a0a1a; border-radius: 5px; text-align: center; font-size: 13px; color: #4ecca3; min-height: 40px; }
+        .saved { background: #1a4a2e; color: #4ecca3; padding: 20px; text-align: center; border-radius: 8px; margin-top: 20px; }
+        .saved h3 { margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Open Dental</h1>
+        <span>Test Form — Simulates Add Patient Screen</span>
+    </div>
+
+    <div class="container">
+        <h2>Add New Patient</h2>
+
+        <form id="patientForm">
+            <div class="form-row required">
+                <label for="last_name">Last Name</label>
+                <input type="text" id="last_name" name="last_name" data-field="last_name">
+            </div>
+            <div class="form-row required">
+                <label for="first_name">First Name</label>
+                <input type="text" id="first_name" name="first_name" data-field="first_name">
+            </div>
+            <div class="form-row">
+                <label for="middle_initial">Middle Initial</label>
+                <input type="text" id="middle_initial" name="middle_initial" class="short" data-field="middle_initial" maxlength="1">
+            </div>
+            <div class="form-row">
+                <label for="preferred_name">Preferred Name</label>
+                <input type="text" id="preferred_name" name="preferred_name" data-field="preferred_name">
+            </div>
+            <div class="form-row">
+                <label for="gender">Gender</label>
+                <select id="gender" name="gender" data-field="gender">
+                    <option value="">-- Select --</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Unknown">Unknown</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label for="dob">Date of Birth</label>
+                <input type="text" id="dob" name="dob" class="medium" placeholder="MM/DD/YYYY" data-field="dob">
+            </div>
+            <div class="form-row">
+                <label for="ssn">SSN</label>
+                <input type="text" id="ssn" name="ssn" class="medium" data-field="ssn" maxlength="9">
+            </div>
+            <div class="form-row">
+                <label for="address">Address</label>
+                <input type="text" id="address" name="address" style="width:300px;" data-field="address">
+            </div>
+            <div class="form-row">
+                <label for="city">City</label>
+                <input type="text" id="city" name="city" data-field="city">
+            </div>
+            <div class="form-row">
+                <label for="state">State</label>
+                <input type="text" id="state" name="state" class="short" data-field="state" maxlength="2">
+                <label for="zip" style="width:auto; margin-left:10px;">Zip</label>
+                <input type="text" id="zip" name="zip" class="medium" data-field="zip" maxlength="5">
+            </div>
+            <div class="form-row">
+                <label for="phone">Phone</label>
+                <input type="text" id="phone" name="phone" class="medium" data-field="phone" maxlength="10">
+            </div>
+
+            <div class="btn-row">
+                <button type="submit" class="btn-save" id="saveBtn">Save Patient</button>
+                <button type="button" class="btn-cancel" onclick="document.getElementById('patientForm').reset()">Clear</button>
+            </div>
+        </form>
+
+        <div class="status" id="status">Ready — waiting for automation...</div>
+        <div class="saved" id="savedMsg" style="display:none;">
+            <h3>Patient Saved Successfully!</h3>
+            <p id="savedDetails"></p>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('patientForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var fn = document.getElementById('first_name').value;
+            var ln = document.getElementById('last_name').value;
+            if (!fn || !ln) {
+                document.getElementById('status').textContent = 'Error: First Name and Last Name are required!';
+                document.getElementById('status').style.color = '#e94560';
+                return;
+            }
+            document.getElementById('status').textContent = 'Patient saved!';
+            document.getElementById('status').style.color = '#4ecca3';
+            document.getElementById('savedMsg').style.display = 'block';
+            document.getElementById('savedDetails').textContent = fn + ' ' + ln + ' — saved at ' + new Date().toLocaleTimeString();
+        });
+
+        // Update status when fields are being filled
+        document.querySelectorAll('input, select').forEach(function(el) {
+            el.addEventListener('input', function() {
+                document.getElementById('status').textContent = 'Filling: ' + el.name + ' = ' + (el.name === 'ssn' ? '***' : el.value);
+                document.getElementById('status').style.color = '#f0c040';
+            });
+        });
+    </script>
+</body>
+</html>

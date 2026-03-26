@@ -16,6 +16,8 @@ from core.opendental import (
     enter_patient_fields_plain, save_patient, dry_run
 )
 from core.csv_import import read_patients_csv, load_batch_log, write_batch_log_entry
+from core.browser import run_browser_automation
+from core.database import insert_patient, test_connection
 
 # Securely import pywinauto ONLY if the OS is Windows
 try:
@@ -204,25 +206,47 @@ class LegacyAutomationBot(ctk.CTk):
         )
         self.pyauto_btn.pack(side="left", expand=True, fill="x", padx=3)
 
-        # Row 2: Test/Demo modes
+        # Row 2: Database + Browser (most reliable, cross-platform)
+        self.reliable_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.reliable_frame.pack(pady=(0, 5), padx=20, fill="x")
+
+        self.db_btn = ctk.CTkButton(
+            self.reliable_frame,
+            text="Direct Database\n(Most Reliable)",
+            font=ctk.CTkFont(size=13, weight="bold"), height=50,
+            command=self.start_db_thread,
+            fg_color="#e94560", hover_color="#c73651"
+        )
+        self.db_btn.pack(side="left", expand=True, fill="x", padx=3)
+
+        self.browser_btn = ctk.CTkButton(
+            self.reliable_frame,
+            text="Browser Automation\n(Web Forms)",
+            font=ctk.CTkFont(size=13, weight="bold"), height=50,
+            command=self.start_browser_thread,
+            fg_color="#2d6a4f", hover_color="#40916c"
+        )
+        self.browser_btn.pack(side="left", expand=True, fill="x", padx=3)
+
+        # Row 3: Test/Demo modes
         self.test_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.test_frame.pack(pady=(0, 5), padx=20, fill="x")
 
         self.demo_btn = ctk.CTkButton(
             self.test_frame,
-            text="Demo Mode\n(Type into TextEdit/Notepad)",
-            font=ctk.CTkFont(size=12, weight="bold"), height=45,
+            text="Demo Mode\n(TextEdit/Notepad)",
+            font=ctk.CTkFont(size=11), height=40,
             command=self.start_demo_thread,
-            fg_color="#2d6a4f", hover_color="#40916c"
+            fg_color="#444", hover_color="#555"
         )
         self.demo_btn.pack(side="left", expand=True, fill="x", padx=3)
 
         self.dryrun_btn = ctk.CTkButton(
             self.test_frame,
-            text="Test / Dry Run\n(No app interaction)",
-            font=ctk.CTkFont(size=12, weight="bold"), height=45,
+            text="Dry Run\n(No app interaction)",
+            font=ctk.CTkFont(size=11), height=40,
             command=self.start_dryrun_thread,
-            fg_color="#6c757d", hover_color="#868e96"
+            fg_color="#444", hover_color="#555"
         )
         self.dryrun_btn.pack(side="left", expand=True, fill="x", padx=3)
 
@@ -232,7 +256,8 @@ class LegacyAutomationBot(ctk.CTk):
             text=f"Status: {text}", text_color=color))
 
     def _all_buttons(self):
-        btns = [self.pyauto_btn, self.browse_btn, self.csv_btn, self.demo_btn, self.dryrun_btn]
+        btns = [self.pyauto_btn, self.browse_btn, self.csv_btn,
+                self.demo_btn, self.dryrun_btn, self.browser_btn, self.db_btn]
         if platform.system() == "Windows":
             btns.append(self.pywin_btn)
         return btns
@@ -371,6 +396,75 @@ class LegacyAutomationBot(ctk.CTk):
         else:
             name = f"{patient.first_name} {patient.last_name}"
             self.update_status(f"Patient Saved: {name}", "limegreen")
+
+    # ---------- Direct Database (Most Reliable) ----------
+    def start_db_thread(self):
+        self.disable_buttons()
+        threading.Thread(target=self.run_db_insert, daemon=True).start()
+
+    def run_db_insert(self):
+        """Insert patient directly into OpenDental database. Works on any platform."""
+        try:
+            patient = self.get_patient_from_gui()
+            is_valid, errors = patient.validate()
+            if not is_valid:
+                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
+                return
+
+            # Load DB config from config.json or use defaults
+            db_config = {
+                "host": "localhost",
+                "port": 3306,
+                "user": "root",
+                "password": "",
+                "database": "opendental"
+            }
+            if os.path.exists(self.config_file):
+                try:
+                    with open(self.config_file, 'r') as f:
+                        data = json.load(f)
+                        if "db_host" in data:
+                            db_config["host"] = data["db_host"]
+                        if "db_port" in data:
+                            db_config["port"] = data["db_port"]
+                        if "db_user" in data:
+                            db_config["user"] = data["db_user"]
+                        if "db_password" in data:
+                            db_config["password"] = data["db_password"]
+                        if "db_name" in data:
+                            db_config["database"] = data["db_name"]
+                except (json.JSONDecodeError, IOError):
+                    pass
+
+            result = insert_patient(patient, self.update_status, db_config)
+            if result:
+                self.update_status(
+                    f"Patient #{result} saved to database! Open OpenDental to verify.",
+                    "limegreen"
+                )
+        except Exception as e:
+            self.update_status(f"DB Error: {e}", "red")
+        finally:
+            self.enable_buttons()
+
+    # ---------- Browser Automation (Cross-Platform) ----------
+    def start_browser_thread(self):
+        self.disable_buttons()
+        threading.Thread(target=self.run_browser, daemon=True).start()
+
+    def run_browser(self):
+        """Open browser and fill patient form. Works on Mac, Windows, Linux."""
+        try:
+            patient = self.get_patient_from_gui()
+            is_valid, errors = patient.validate()
+            if not is_valid:
+                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
+                return
+            run_browser_automation(patient, self.update_status)
+        except Exception as e:
+            self.update_status(f"Browser Error: {e}", "red")
+        finally:
+            self.enable_buttons()
 
     # ---------- Test / Dry Run Mode ----------
     def start_dryrun_thread(self):

@@ -94,17 +94,27 @@ def launch_app(app_path, status_callback, timing):
     return True
 
 
-def navigate_to_add_patient(status_callback, timing):
+def navigate_to_add_patient(status_callback, timing, skip_login=False):
     """Navigate from OpenDental main screen to the Add Patient form."""
-    status_callback("Bypassing Open Dental Login...", "yellow")
-    pyautogui.press('enter')
-    time.sleep(timing["login_delay_s"])
+    if not skip_login:
+        status_callback("Bypassing Open Dental Login...", "yellow")
+        pyautogui.press('enter')
+        time.sleep(timing["login_delay_s"])
 
+    # Dismiss any alert popups first
+    status_callback("Dismissing popups...", "yellow")
+    pyautogui.press('enter')
+    time.sleep(1)
+
+    # Click on Select Patient button in toolbar
+    # OpenDental shortcut: click "Select Patient" or use keyboard
     status_callback("Opening 'Select Patient'...", "yellow")
-    pyautogui.hotkey('ctrl', 's')
+    pyautogui.hotkey('ctrl', 'p')
     time.sleep(2)
 
-    status_callback("Clicking 'Add Pt'...", "yellow")
+    # In Select Patient window, click "Add New Patient" button
+    status_callback("Clicking 'Add New Patient'...", "yellow")
+    # Tab to the Add button and press Enter, or use Alt+A within the Select Patient dialog
     pyautogui.hotkey('alt', 'a')
     time.sleep(2)
 

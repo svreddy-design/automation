@@ -11,8 +11,9 @@ from tkinter import filedialog
 
 from core.patient import Patient
 from core.opendental import (
-    load_timing, navigate_to_add_patient,
-    enter_patient_fields, save_patient
+    load_timing, find_opendental, launch_app,
+    navigate_to_add_patient, enter_patient_fields,
+    enter_patient_fields_plain, save_patient, dry_run
 )
 from core.csv_import import read_patients_csv, load_batch_log, write_batch_log_entry
 
@@ -32,29 +33,37 @@ class LegacyAutomationBot(ctk.CTk):
         super().__init__()
 
         self.title("Practice Management Bot PRO")
-        self.geometry("650x900")
+        self.geometry("650x950")
         self.resizable(False, False)
 
         self.config_file = "config.json"
         self.app_path = self.load_config()
         self.timing = load_timing(self.config_file)
 
+        # Auto-detect OpenDental on Windows if no path set
+        if self.app_path == "winword" and platform.system() == "Windows":
+            detected = find_opendental()
+            if detected:
+                self.app_path = detected
+                self.save_config()
+
         # --- Header ---
         self.header_label = ctk.CTkLabel(
-            self, text="Practice App Automation",
-            font=ctk.CTkFont(size=24, weight="bold")
+            self, text="Practice Management Bot PRO",
+            font=ctk.CTkFont(size=22, weight="bold")
         )
-        self.header_label.pack(pady=(15, 2))
+        self.header_label.pack(pady=(12, 2))
 
+        os_name = platform.system()
         self.instructions = ctk.CTkLabel(
             self,
-            text="Automates legacy medical/dental management software.",
+            text=f"Automates dental practice software  |  OS: {os_name}",
             text_color="gray"
         )
-        self.instructions.pack(pady=(0, 10))
+        self.instructions.pack(pady=(0, 8))
 
         # --- Scrollable Patient Form ---
-        self.form_frame = ctk.CTkScrollableFrame(self, height=350)
+        self.form_frame = ctk.CTkScrollableFrame(self, height=320)
         self.form_frame.pack(pady=5, padx=20, fill="x")
 
         self.entries = {}
@@ -171,39 +180,69 @@ class LegacyAutomationBot(ctk.CTk):
         )
         self.browse_btn.pack(pady=(0, 8))
 
-        # --- Action Buttons ---
+        # --- Action Buttons (3 modes) ---
         self.button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.button_frame.pack(pady=(5, 15), padx=20, fill="x")
+        self.button_frame.pack(pady=(5, 5), padx=20, fill="x")
 
-        self.pywin_btn = ctk.CTkButton(
-            self.button_frame,
-            text="Run PyWinAuto\n(Native Elements)",
-            font=ctk.CTkFont(size=14, weight="bold"), height=50,
-            command=self.start_pywinauto_thread,
-            fg_color="#005b96", hover_color="#03396c"
-        )
-        self.pywin_btn.pack(side="left", expand=True, fill="x", padx=5)
+        # Row 1: Main automation engines
+        if platform.system() == "Windows":
+            self.pywin_btn = ctk.CTkButton(
+                self.button_frame,
+                text="Run PyWinAuto\n(Windows Native)",
+                font=ctk.CTkFont(size=13, weight="bold"), height=50,
+                command=self.start_pywinauto_thread,
+                fg_color="#005b96", hover_color="#03396c"
+            )
+            self.pywin_btn.pack(side="left", expand=True, fill="x", padx=3)
 
         self.pyauto_btn = ctk.CTkButton(
             self.button_frame,
-            text="Run PyAutoGUI\n(Screen/Images)",
-            font=ctk.CTkFont(size=14, weight="bold"), height=50,
+            text="Run PyAutoGUI\n(Cross-Platform)",
+            font=ctk.CTkFont(size=13, weight="bold"), height=50,
             command=self.start_pyautogui_thread,
             fg_color="#b33939", hover_color="#cd6133"
         )
-        self.pyauto_btn.pack(side="right", expand=True, fill="x", padx=5)
+        self.pyauto_btn.pack(side="left", expand=True, fill="x", padx=3)
+
+        # Row 2: Test/Demo modes
+        self.test_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.test_frame.pack(pady=(0, 5), padx=20, fill="x")
+
+        self.demo_btn = ctk.CTkButton(
+            self.test_frame,
+            text="Demo Mode\n(Type into TextEdit/Notepad)",
+            font=ctk.CTkFont(size=12, weight="bold"), height=45,
+            command=self.start_demo_thread,
+            fg_color="#2d6a4f", hover_color="#40916c"
+        )
+        self.demo_btn.pack(side="left", expand=True, fill="x", padx=3)
+
+        self.dryrun_btn = ctk.CTkButton(
+            self.test_frame,
+            text="Test / Dry Run\n(No app interaction)",
+            font=ctk.CTkFont(size=12, weight="bold"), height=45,
+            command=self.start_dryrun_thread,
+            fg_color="#6c757d", hover_color="#868e96"
+        )
+        self.dryrun_btn.pack(side="left", expand=True, fill="x", padx=3)
 
     # ---------- Helpers ----------
     def update_status(self, text, color="limegreen"):
         self.after(0, lambda: self.status_label.configure(
             text=f"Status: {text}", text_color=color))
 
+    def _all_buttons(self):
+        btns = [self.pyauto_btn, self.browse_btn, self.csv_btn, self.demo_btn, self.dryrun_btn]
+        if platform.system() == "Windows":
+            btns.append(self.pywin_btn)
+        return btns
+
     def disable_buttons(self):
-        for btn in [self.pywin_btn, self.pyauto_btn, self.browse_btn, self.csv_btn]:
+        for btn in self._all_buttons():
             self.after(0, lambda b=btn: b.configure(state="disabled"))
 
     def enable_buttons(self):
-        for btn in [self.pywin_btn, self.pyauto_btn, self.browse_btn, self.csv_btn]:
+        for btn in self._all_buttons():
             self.after(0, lambda b=btn: b.configure(state="normal"))
 
     def get_patient_from_gui(self):
@@ -240,10 +279,16 @@ class LegacyAutomationBot(ctk.CTk):
             json.dump(data, f, indent=2)
 
     def browse_app_path(self):
-        file_path = filedialog.askopenfilename(
-            title="Select Application Executable",
-            filetypes=[("Executable Files", "*.exe"), ("All Files", "*.*")]
-        )
+        if platform.system() == "Darwin":
+            file_path = filedialog.askopenfilename(
+                title="Select Application",
+                filetypes=[("Applications", "*.app"), ("All Files", "*.*")]
+            )
+        else:
+            file_path = filedialog.askopenfilename(
+                title="Select Application Executable",
+                filetypes=[("Executable Files", "*.exe"), ("All Files", "*.*")]
+            )
         if file_path:
             self.app_path = file_path
             self.path_display.configure(state="normal")
@@ -267,8 +312,7 @@ class LegacyAutomationBot(ctk.CTk):
 
     def run_csv_batch(self, csv_path):
         """Process CSV file in batch mode.
-        NOTE: OpenDental must already be running and focused.
-        Batch mode does not launch the app — it enters patients directly."""
+        OpenDental must already be running for real mode."""
         try:
             rows = read_patients_csv(csv_path)
             log_path = os.path.join(os.path.dirname(csv_path), "batch_log.csv")
@@ -316,7 +360,7 @@ class LegacyAutomationBot(ctk.CTk):
 
     # ---------- Shared OpenDental Entry ----------
     def _run_opendental_entry(self, patient):
-        """Enter a single patient into OpenDental (assumes app is focused on main screen)."""
+        """Enter a single patient into OpenDental (assumes app is focused)."""
         navigate_to_add_patient(self.update_status, self.timing)
         field_errors = enter_patient_fields(patient, self.update_status, self.timing)
         save_patient(self.update_status)
@@ -328,7 +372,71 @@ class LegacyAutomationBot(ctk.CTk):
             name = f"{patient.first_name} {patient.last_name}"
             self.update_status(f"Patient Saved: {name}", "limegreen")
 
-    # ---------- PyWinAuto Engine ----------
+    # ---------- Test / Dry Run Mode ----------
+    def start_dryrun_thread(self):
+        self.disable_buttons()
+        threading.Thread(target=self.run_dryrun, daemon=True).start()
+
+    def run_dryrun(self):
+        """Simulate automation without touching any app. Works on any OS."""
+        try:
+            patient = self.get_patient_from_gui()
+            is_valid, errors = patient.validate()
+            if not is_valid:
+                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
+                return
+            dry_run(patient, self.update_status)
+        except Exception as e:
+            self.update_status(f"Dry Run Error: {e}", "red")
+        finally:
+            self.enable_buttons()
+
+    # ---------- Demo Mode (TextEdit/Notepad) ----------
+    def start_demo_thread(self):
+        self.disable_buttons()
+        threading.Thread(target=self.run_demo, daemon=True).start()
+
+    def run_demo(self):
+        """Open a text editor and type patient data into it. Proves automation works on any OS."""
+        try:
+            patient = self.get_patient_from_gui()
+            is_valid, errors = patient.validate()
+            if not is_valid:
+                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
+                return
+
+            self.update_status("Opening text editor for demo...", "yellow")
+
+            if platform.system() == "Darwin":
+                os.system("open -a TextEdit")
+                time.sleep(2)
+                os.system("osascript -e 'tell application \"TextEdit\" to activate'")
+                # Create new doc
+                pyautogui.hotkey('command', 'n')
+                time.sleep(1)
+            elif platform.system() == "Windows":
+                subprocess.Popen(["notepad.exe"])
+                time.sleep(2)
+            else:
+                # Linux
+                for editor in ["gedit", "xed", "mousepad", "nano"]:
+                    try:
+                        subprocess.Popen([editor])
+                        time.sleep(2)
+                        break
+                    except FileNotFoundError:
+                        continue
+
+            self.update_status("Typing patient data into editor...", "yellow")
+            enter_patient_fields_plain(patient, self.update_status, self.timing)
+
+            self.update_status("Demo complete! Check the text editor.", "limegreen")
+        except Exception as e:
+            self.update_status(f"Demo Error: {e}", "red")
+        finally:
+            self.enable_buttons()
+
+    # ---------- PyWinAuto Engine (Windows Only) ----------
     def start_pywinauto_thread(self):
         self.disable_buttons()
         threading.Thread(target=self.run_pywinauto, daemon=True).start()
@@ -348,23 +456,18 @@ class LegacyAutomationBot(ctk.CTk):
                 return
 
             app_name = os.path.basename(self.app_path)
-            self.update_status(f"Launching {app_name}...", "yellow")
 
-            if self.app_path == "winword":
-                subprocess.Popen(["cmd", "/c", "start winword"], shell=True)
-            else:
-                subprocess.Popen([self.app_path])
-
-            self.update_status("Waiting for application to load...", "yellow")
-            time.sleep(self.timing["app_load_delay_s"])
+            if not launch_app(self.app_path, self.update_status, self.timing):
+                self.enable_buttons()
+                return
 
             # Connect via PyWinAuto UIA
+            self.update_status("Connecting to application...", "yellow")
             try:
-                path = "winword.exe" if self.app_path == "winword" else self.app_path
-                app = Application(backend="uia").connect(path=path, timeout=10)
+                app = Application(backend="uia").connect(path=self.app_path, timeout=15)
             except Exception:
                 app = Application(backend="uia").connect(
-                    title_re=f".*{app_name.split('.')[0]}.*", timeout=10
+                    title_re=f".*{app_name.split('.')[0]}.*", timeout=15
                 )
 
             main_window = app.top_window()
@@ -380,7 +483,7 @@ class LegacyAutomationBot(ctk.CTk):
         finally:
             self.enable_buttons()
 
-    # ---------- PyAutoGUI Engine ----------
+    # ---------- PyAutoGUI Engine (Cross-Platform) ----------
     def start_pyautogui_thread(self):
         self.disable_buttons()
         threading.Thread(target=self.run_pyautogui, daemon=True).start()
@@ -395,42 +498,24 @@ class LegacyAutomationBot(ctk.CTk):
                 return
 
             app_name = os.path.basename(self.app_path)
-            self.update_status(f"Launching {app_name}...", "yellow")
 
-            if platform.system() == "Windows":
-                pyautogui.hotkey('win', 'r')
-                time.sleep(1)
-                target = self.app_path if self.app_path != "winword" else "winword"
-                pyautogui.typewrite(target)
-                pyautogui.press('enter')
-            elif platform.system() == "Darwin":
-                target_name = app_name if self.app_path != "winword" else "Microsoft Word"
-                os.system(f"open -a '{target_name}'")
-                time.sleep(1)
-                os.system(f"osascript -e 'tell application \"{target_name}\" to activate'")
-                time.sleep(2)
-
-            self.update_status(f"Waiting for {app_name} to load...", "yellow")
-            time.sleep(self.timing["app_load_delay_s"])
+            if not launch_app(self.app_path, self.update_status, self.timing):
+                self.enable_buttons()
+                return
 
             if "opendental" in app_name.lower():
                 self._run_opendental_entry(patient)
             else:
-                self.update_status("Non-OpenDental PyAutoGUI mode", "orange")
-                pyautogui.press('enter')
-                time.sleep(2)
-                pyautogui.write(
-                    f"Patient: {patient.first_name} {patient.last_name}",
-                    interval=0.05
-                )
-                self.update_status("Screen Automation Complete!", "limegreen")
+                self.update_status("Non-OpenDental mode: typing patient data...", "orange")
+                enter_patient_fields_plain(patient, self.update_status, self.timing)
+                self.update_status("Automation Complete!", "limegreen")
 
         except Exception as e:
             self.update_status(f"PyAutoGUI Error: {e}", "red")
         finally:
             self.enable_buttons()
 
-    # ---------- Word Fallback (preserved from original) ----------
+    # ---------- Word Fallback (Windows only) ----------
     def _run_word_automation(self, app, patient):
         self.update_status("Selecting 'Blank Document'...", "yellow")
         pyautogui.press('enter')

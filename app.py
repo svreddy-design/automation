@@ -30,6 +30,9 @@ class PracticeManagementBot(ctk.CTk):
         self.config = self.load_config()
         self.timing = load_timing(self.config_file)
 
+        # Keep bot window always on top so user can see status
+        self.attributes("-topmost", True)
+
         # ── Header ──
         ctk.CTkLabel(
             self, text="Practice Management Bot PRO",

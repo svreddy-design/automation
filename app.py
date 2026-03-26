@@ -19,6 +19,12 @@ from core.csv_import import read_patients_csv, load_batch_log, write_batch_log_e
 from core.browser import run_browser_automation
 from core.database import insert_patient, test_connection
 
+# Import GUI automation for Windows
+try:
+    from core.opendental_gui import automate_patient_entry
+except ImportError:
+    automate_patient_entry = None
+
 # Securely import pywinauto ONLY if the OS is Windows
 try:
     if platform.system() == "Windows":
@@ -188,14 +194,14 @@ class LegacyAutomationBot(ctk.CTk):
 
         # Row 1: Main automation engines
         if platform.system() == "Windows":
-            self.pywin_btn = ctk.CTkButton(
+            self.gui_auto_btn = ctk.CTkButton(
                 self.button_frame,
-                text="Run PyWinAuto\n(Windows Native)",
-                font=ctk.CTkFont(size=13, weight="bold"), height=50,
-                command=self.start_pywinauto_thread,
+                text="Open App & Fill\n(Opens OpenDental)",
+                font=ctk.CTkFont(size=14, weight="bold"), height=55,
+                command=self.start_gui_auto_thread,
                 fg_color="#005b96", hover_color="#03396c"
             )
-            self.pywin_btn.pack(side="left", expand=True, fill="x", padx=3)
+            self.gui_auto_btn.pack(side="left", expand=True, fill="x", padx=3)
 
         self.pyauto_btn = ctk.CTkButton(
             self.button_frame,
@@ -259,7 +265,7 @@ class LegacyAutomationBot(ctk.CTk):
         btns = [self.pyauto_btn, self.browse_btn, self.csv_btn,
                 self.demo_btn, self.dryrun_btn, self.browser_btn, self.db_btn]
         if platform.system() == "Windows":
-            btns.append(self.pywin_btn)
+            btns.append(self.gui_auto_btn)
         return btns
 
     def disable_buttons(self):
@@ -396,6 +402,32 @@ class LegacyAutomationBot(ctk.CTk):
         else:
             name = f"{patient.first_name} {patient.last_name}"
             self.update_status(f"Patient Saved: {name}", "limegreen")
+
+    # ---------- Open App & Fill (GUI Automation) ----------
+    def start_gui_auto_thread(self):
+        self.disable_buttons()
+        threading.Thread(target=self.run_gui_auto, daemon=True).start()
+
+    def run_gui_auto(self):
+        """Open OpenDental and fill the patient form automatically."""
+        try:
+            patient = self.get_patient_from_gui()
+            is_valid, errors = patient.validate()
+            if not is_valid:
+                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
+                return
+
+            # Load config for timing and app path
+            config = dict(self.timing)
+            config["app_path"] = self.app_path
+
+            success = automate_patient_entry(patient, self.update_status, config)
+            if not success:
+                self.update_status("Automation failed — check error above", "red")
+        except Exception as e:
+            self.update_status(f"GUI Auto Error: {e}", "red")
+        finally:
+            self.enable_buttons()
 
     # ---------- Direct Database (Most Reliable) ----------
     def start_db_thread(self):

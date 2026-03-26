@@ -1,271 +1,181 @@
+"""Practice Management Bot PRO — OpenDental Patient Entry Automation"""
+
 import customtkinter as ctk
-import pyautogui
 import time
 import threading
 import os
 import platform
 import subprocess
 import json
-from datetime import datetime
 from tkinter import filedialog
 
 from core.patient import Patient
-from core.opendental import (
-    load_timing, find_opendental, launch_app,
-    navigate_to_add_patient, enter_patient_fields,
-    enter_patient_fields_plain, save_patient, dry_run
-)
+from core.opendental import load_timing
 from core.csv_import import read_patients_csv, load_batch_log, write_batch_log_entry
-from core.browser import run_browser_automation
-from core.database import insert_patient, test_connection
-
-# Import GUI automation for Windows
-try:
-    from core.opendental_gui import automate_patient_entry
-except ImportError:
-    automate_patient_entry = None
-
-# Securely import pywinauto ONLY if the OS is Windows
-try:
-    if platform.system() == "Windows":
-        from pywinauto import Application
-except ImportError:
-    pass
+from core.database import insert_patient
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("green")
 
 
-class LegacyAutomationBot(ctk.CTk):
+class PracticeManagementBot(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         self.title("Practice Management Bot PRO")
-        self.geometry("650x950")
+        self.geometry("580x820")
         self.resizable(False, False)
 
         self.config_file = "config.json"
-        self.app_path = self.load_config()
+        self.config = self.load_config()
         self.timing = load_timing(self.config_file)
 
-        # Auto-detect OpenDental on Windows if no path set
-        if self.app_path == "winword" and platform.system() == "Windows":
-            detected = find_opendental()
-            if detected:
-                self.app_path = detected
-                self.save_config()
-
-        # --- Header ---
-        self.header_label = ctk.CTkLabel(
+        # ── Header ──
+        ctk.CTkLabel(
             self, text="Practice Management Bot PRO",
             font=ctk.CTkFont(size=22, weight="bold")
-        )
-        self.header_label.pack(pady=(12, 2))
+        ).pack(pady=(15, 0))
 
-        os_name = platform.system()
-        self.instructions = ctk.CTkLabel(
-            self,
-            text=f"Automates dental practice software  |  OS: {os_name}",
-            text_color="gray"
-        )
-        self.instructions.pack(pady=(0, 8))
+        ctk.CTkLabel(
+            self, text="OpenDental Patient Entry Automation",
+            font=ctk.CTkFont(size=13), text_color="#888"
+        ).pack(pady=(2, 12))
 
-        # --- Scrollable Patient Form ---
-        self.form_frame = ctk.CTkScrollableFrame(self, height=320)
+        # ── Patient Form ──
+        self.form_frame = ctk.CTkFrame(self)
         self.form_frame.pack(pady=5, padx=20, fill="x")
 
+        ctk.CTkLabel(
+            self.form_frame, text="Patient Information",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).grid(row=0, column=0, columnspan=4, padx=10, pady=(10, 5), sticky="w")
+
         self.entries = {}
-        row = 0
+        row = 1
 
-        # Last Name
-        ctk.CTkLabel(self.form_frame, text="Last Name *").grid(row=row, column=0, padx=8, pady=5, sticky="w")
-        self.entries["last_name"] = ctk.CTkEntry(self.form_frame, width=200)
-        self.entries["last_name"].grid(row=row, column=1, padx=8, pady=5, columnspan=3, sticky="w")
-        self.entries["last_name"].insert(0, "Doe")
-        row += 1
+        fields = [
+            ("last_name", "Last Name *", 200, None, None),
+            ("first_name", "First Name *", 200, None, None),
+            ("middle_initial", "Middle Initial", 50, None, None),
+            ("preferred_name", "Preferred Name", 200, None, None),
+            ("dob", "Date of Birth", 150, "MM/DD/YYYY", None),
+            ("ssn", "SSN", 150, None, "*"),
+            ("address", "Address", 300, None, None),
+            ("city", "City", 200, None, None),
+            ("phone", "Phone", 150, "10 digits", None),
+        ]
 
-        # First Name
-        ctk.CTkLabel(self.form_frame, text="First Name *").grid(row=row, column=0, padx=8, pady=5, sticky="w")
-        self.entries["first_name"] = ctk.CTkEntry(self.form_frame, width=200)
-        self.entries["first_name"].grid(row=row, column=1, padx=8, pady=5, columnspan=3, sticky="w")
-        self.entries["first_name"].insert(0, "John")
-        row += 1
+        for key, label, width, placeholder, show in fields:
+            ctk.CTkLabel(self.form_frame, text=label, font=ctk.CTkFont(size=12)).grid(
+                row=row, column=0, padx=(10, 5), pady=3, sticky="w"
+            )
+            kwargs = {"width": width}
+            if placeholder:
+                kwargs["placeholder_text"] = placeholder
+            if show:
+                kwargs["show"] = show
+            entry = ctk.CTkEntry(self.form_frame, **kwargs)
+            entry.grid(row=row, column=1, padx=5, pady=3, columnspan=3, sticky="w")
+            self.entries[key] = entry
+            row += 1
 
-        # Middle Initial
-        ctk.CTkLabel(self.form_frame, text="Middle Initial").grid(row=row, column=0, padx=8, pady=5, sticky="w")
-        self.entries["middle_initial"] = ctk.CTkEntry(self.form_frame, width=50)
-        self.entries["middle_initial"].grid(row=row, column=1, padx=8, pady=5, sticky="w")
-        row += 1
-
-        # Preferred Name
-        ctk.CTkLabel(self.form_frame, text="Preferred Name").grid(row=row, column=0, padx=8, pady=5, sticky="w")
-        self.entries["preferred_name"] = ctk.CTkEntry(self.form_frame, width=200)
-        self.entries["preferred_name"].grid(row=row, column=1, padx=8, pady=5, columnspan=3, sticky="w")
-        row += 1
-
-        # Gender (dropdown)
-        ctk.CTkLabel(self.form_frame, text="Gender").grid(row=row, column=0, padx=8, pady=5, sticky="w")
+        # Gender dropdown
+        ctk.CTkLabel(self.form_frame, text="Gender", font=ctk.CTkFont(size=12)).grid(
+            row=row, column=0, padx=(10, 5), pady=3, sticky="w"
+        )
         self.gender_var = ctk.StringVar(value="")
         self.entries["gender"] = ctk.CTkOptionMenu(
             self.form_frame, values=["", "Male", "Female", "Unknown"],
             variable=self.gender_var, width=150
         )
-        self.entries["gender"].grid(row=row, column=1, padx=8, pady=5, sticky="w")
-        row += 1
-
-        # DOB
-        ctk.CTkLabel(self.form_frame, text="Date of Birth").grid(row=row, column=0, padx=8, pady=5, sticky="w")
-        self.entries["dob"] = ctk.CTkEntry(self.form_frame, width=150, placeholder_text="MM/DD/YYYY")
-        self.entries["dob"].grid(row=row, column=1, padx=8, pady=5, sticky="w")
-        row += 1
-
-        # SSN (masked)
-        ctk.CTkLabel(self.form_frame, text="SSN").grid(row=row, column=0, padx=8, pady=5, sticky="w")
-        self.entries["ssn"] = ctk.CTkEntry(self.form_frame, width=150, show="*")
-        self.entries["ssn"].grid(row=row, column=1, padx=8, pady=5, sticky="w")
-        row += 1
-
-        # Address
-        ctk.CTkLabel(self.form_frame, text="Address").grid(row=row, column=0, padx=8, pady=5, sticky="w")
-        self.entries["address"] = ctk.CTkEntry(self.form_frame, width=300)
-        self.entries["address"].grid(row=row, column=1, padx=8, pady=5, columnspan=3, sticky="w")
-        row += 1
-
-        # City
-        ctk.CTkLabel(self.form_frame, text="City").grid(row=row, column=0, padx=8, pady=5, sticky="w")
-        self.entries["city"] = ctk.CTkEntry(self.form_frame, width=200)
-        self.entries["city"].grid(row=row, column=1, padx=8, pady=5, sticky="w")
+        self.entries["gender"].grid(row=row, column=1, padx=5, pady=3, sticky="w")
         row += 1
 
         # State + Zip on same row
-        ctk.CTkLabel(self.form_frame, text="State").grid(row=row, column=0, padx=8, pady=5, sticky="w")
+        ctk.CTkLabel(self.form_frame, text="State", font=ctk.CTkFont(size=12)).grid(
+            row=row, column=0, padx=(10, 5), pady=3, sticky="w"
+        )
         self.entries["state"] = ctk.CTkEntry(self.form_frame, width=50)
-        self.entries["state"].grid(row=row, column=1, padx=8, pady=5, sticky="w")
-        ctk.CTkLabel(self.form_frame, text="Zip").grid(row=row, column=2, padx=8, pady=5, sticky="w")
+        self.entries["state"].grid(row=row, column=1, padx=5, pady=3, sticky="w")
+        ctk.CTkLabel(self.form_frame, text="Zip", font=ctk.CTkFont(size=12)).grid(
+            row=row, column=2, padx=5, pady=3, sticky="w"
+        )
         self.entries["zip"] = ctk.CTkEntry(self.form_frame, width=80)
-        self.entries["zip"].grid(row=row, column=3, padx=8, pady=5, sticky="w")
-        row += 1
+        self.entries["zip"].grid(row=row, column=3, padx=5, pady=3, sticky="w")
 
-        # Phone
-        ctk.CTkLabel(self.form_frame, text="Phone").grid(row=row, column=0, padx=8, pady=5, sticky="w")
-        self.entries["phone"] = ctk.CTkEntry(self.form_frame, width=150, placeholder_text="10 digits")
-        self.entries["phone"].grid(row=row, column=1, padx=8, pady=5, sticky="w")
+        # Set defaults
+        self.entries["last_name"].insert(0, "Doe")
+        self.entries["first_name"].insert(0, "John")
 
-        # --- CSV Import + Status ---
-        self.mid_frame = ctk.CTkFrame(self)
-        self.mid_frame.pack(pady=5, padx=20, fill="x")
+        # ── Status Console ──
+        self.status_frame = ctk.CTkFrame(self, fg_color="#0a0a1a")
+        self.status_frame.pack(pady=8, padx=20, fill="x")
 
-        self.csv_btn = ctk.CTkButton(
-            self.mid_frame, text="Import CSV",
-            command=self.import_csv, fg_color="#444", hover_color="#555", width=120
+        ctk.CTkLabel(
+            self.status_frame, text="Status Log",
+            font=ctk.CTkFont(size=11, weight="bold"), text_color="#555"
+        ).pack(anchor="w", padx=10, pady=(5, 0))
+
+        self.status_text = ctk.CTkTextbox(
+            self.status_frame, height=100, font=ctk.CTkFont(size=12),
+            fg_color="#0a0a1a", text_color="#4ecca3",
+            state="disabled"
         )
-        self.csv_btn.pack(side="left", padx=10, pady=10)
+        self.status_text.pack(padx=10, pady=(0, 8), fill="x")
 
-        self.status_label = ctk.CTkLabel(
-            self.mid_frame, text="Status: Ready",
-            font=ctk.CTkFont(size=13), text_color="limegreen"
-        )
-        self.status_label.pack(side="left", padx=10, pady=10, expand=True)
-
-        # --- Settings ---
-        self.settings_frame = ctk.CTkFrame(self)
-        self.settings_frame.pack(pady=5, padx=20, fill="x")
-
-        self.path_label = ctk.CTkLabel(
-            self.settings_frame, text="Target Application Path:",
-            font=ctk.CTkFont(weight="bold")
-        )
-        self.path_label.pack(pady=(8, 0), padx=10)
-
-        self.path_display = ctk.CTkEntry(self.settings_frame, width=400)
-        self.path_display.pack(pady=4, padx=10)
-        self.path_display.insert(0, self.app_path)
-        self.path_display.configure(state="disabled")
-
-        self.browse_btn = ctk.CTkButton(
-            self.settings_frame, text="Select App Executable",
-            command=self.browse_app_path, fg_color="#444", hover_color="#555"
-        )
-        self.browse_btn.pack(pady=(0, 8))
-
-        # --- Action Buttons (3 modes) ---
-        self.button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.button_frame.pack(pady=(5, 5), padx=20, fill="x")
-
-        # Row 1: Main automation engines
-        if platform.system() == "Windows":
-            self.gui_auto_btn = ctk.CTkButton(
-                self.button_frame,
-                text="Open App & Fill\n(Opens OpenDental)",
-                font=ctk.CTkFont(size=14, weight="bold"), height=55,
-                command=self.start_gui_auto_thread,
-                fg_color="#005b96", hover_color="#03396c"
-            )
-            self.gui_auto_btn.pack(side="left", expand=True, fill="x", padx=3)
-
-        self.pyauto_btn = ctk.CTkButton(
-            self.button_frame,
-            text="Run PyAutoGUI\n(Cross-Platform)",
-            font=ctk.CTkFont(size=13, weight="bold"), height=50,
-            command=self.start_pyautogui_thread,
-            fg_color="#b33939", hover_color="#cd6133"
-        )
-        self.pyauto_btn.pack(side="left", expand=True, fill="x", padx=3)
-
-        # Row 2: Database + Browser (most reliable, cross-platform)
-        self.reliable_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.reliable_frame.pack(pady=(0, 5), padx=20, fill="x")
+        # ── Action Buttons ──
+        self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.btn_frame.pack(pady=5, padx=20, fill="x")
 
         self.db_btn = ctk.CTkButton(
-            self.reliable_frame,
-            text="Direct Database\n(Most Reliable)",
-            font=ctk.CTkFont(size=13, weight="bold"), height=50,
+            self.btn_frame,
+            text="Save to OpenDental\n(Database — Instant)",
+            font=ctk.CTkFont(size=14, weight="bold"), height=55,
             command=self.start_db_thread,
             fg_color="#e94560", hover_color="#c73651"
         )
-        self.db_btn.pack(side="left", expand=True, fill="x", padx=3)
+        self.db_btn.pack(fill="x", pady=3)
 
-        self.browser_btn = ctk.CTkButton(
-            self.reliable_frame,
-            text="Browser Automation\n(Web Forms)",
-            font=ctk.CTkFont(size=13, weight="bold"), height=50,
-            command=self.start_browser_thread,
-            fg_color="#2d6a4f", hover_color="#40916c"
-        )
-        self.browser_btn.pack(side="left", expand=True, fill="x", padx=3)
-
-        # Row 3: Test/Demo modes
-        self.test_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.test_frame.pack(pady=(0, 5), padx=20, fill="x")
-
-        self.demo_btn = ctk.CTkButton(
-            self.test_frame,
-            text="Demo Mode\n(TextEdit/Notepad)",
-            font=ctk.CTkFont(size=11), height=40,
-            command=self.start_demo_thread,
-            fg_color="#444", hover_color="#555"
-        )
-        self.demo_btn.pack(side="left", expand=True, fill="x", padx=3)
-
-        self.dryrun_btn = ctk.CTkButton(
-            self.test_frame,
-            text="Dry Run\n(No app interaction)",
-            font=ctk.CTkFont(size=11), height=40,
-            command=self.start_dryrun_thread,
-            fg_color="#444", hover_color="#555"
-        )
-        self.dryrun_btn.pack(side="left", expand=True, fill="x", padx=3)
-
-    # ---------- Helpers ----------
-    def update_status(self, text, color="limegreen"):
-        self.after(0, lambda: self.status_label.configure(
-            text=f"Status: {text}", text_color=color))
-
-    def _all_buttons(self):
-        btns = [self.pyauto_btn, self.browse_btn, self.csv_btn,
-                self.demo_btn, self.dryrun_btn, self.browser_btn, self.db_btn]
         if platform.system() == "Windows":
-            btns.append(self.gui_auto_btn)
+            self.gui_btn = ctk.CTkButton(
+                self.btn_frame,
+                text="Open App & Fill Form\n(GUI Automation — Visual)",
+                font=ctk.CTkFont(size=14, weight="bold"), height=55,
+                command=self.start_gui_thread,
+                fg_color="#005b96", hover_color="#03396c"
+            )
+            self.gui_btn.pack(fill="x", pady=3)
+
+        self.csv_btn = ctk.CTkButton(
+            self.btn_frame,
+            text="Import CSV Batch",
+            font=ctk.CTkFont(size=12), height=38,
+            command=self.import_csv,
+            fg_color="#444", hover_color="#555"
+        )
+        self.csv_btn.pack(fill="x", pady=3)
+
+    # ── Status Logging ──
+    def log(self, text, color="#4ecca3"):
+        """Add a line to the status console."""
+        timestamp = time.strftime("%H:%M:%S")
+        self.after(0, lambda: self._append_log(f"[{timestamp}] {text}\n", color))
+
+    def _append_log(self, text, color):
+        self.status_text.configure(state="normal")
+        self.status_text.insert("end", text)
+        self.status_text.see("end")
+        self.status_text.configure(state="disabled")
+
+    def update_status(self, text, color="limegreen"):
+        """Compatibility wrapper — also writes to log."""
+        self.log(text, color)
+
+    # ── Button State ──
+    def _all_buttons(self):
+        btns = [self.db_btn, self.csv_btn]
+        if platform.system() == "Windows" and hasattr(self, 'gui_btn'):
+            btns.append(self.gui_btn)
         return btns
 
     def disable_buttons(self):
@@ -276,8 +186,8 @@ class LegacyAutomationBot(ctk.CTk):
         for btn in self._all_buttons():
             self.after(0, lambda b=btn: b.configure(state="normal"))
 
+    # ── Get Patient ──
     def get_patient_from_gui(self):
-        """Collect all form fields into a Patient object."""
         vals = {}
         for key, widget in self.entries.items():
             if key == "gender":
@@ -286,50 +196,133 @@ class LegacyAutomationBot(ctk.CTk):
                 vals[key] = widget.get()
         return Patient(**vals)
 
-    # ---------- Config ----------
+    # ── Config ──
     def load_config(self):
+        defaults = {
+            "app_path": r"C:\Program Files (x86)\Open Dental\OpenDental.exe",
+            "db_host": "localhost",
+            "db_port": 3306,
+            "db_user": "root",
+            "db_password": "",
+            "db_name": "opendental",
+        }
         if os.path.exists(self.config_file):
             try:
                 with open(self.config_file, 'r') as f:
                     data = json.load(f)
-                    return data.get("app_path", "winword")
-            except (json.JSONDecodeError, IOError):
-                return "winword"
-        return "winword"
-
-    def save_config(self):
-        data = {}
-        if os.path.exists(self.config_file):
-            try:
-                with open(self.config_file, 'r') as f:
-                    data = json.load(f)
+                    defaults.update(data)
             except (json.JSONDecodeError, IOError):
                 pass
-        data["app_path"] = self.app_path
-        with open(self.config_file, 'w') as f:
-            json.dump(data, f, indent=2)
+        return defaults
 
-    def browse_app_path(self):
-        if platform.system() == "Darwin":
-            file_path = filedialog.askopenfilename(
-                title="Select Application",
-                filetypes=[("Applications", "*.app"), ("All Files", "*.*")]
-            )
-        else:
-            file_path = filedialog.askopenfilename(
-                title="Select Application Executable",
-                filetypes=[("Executable Files", "*.exe"), ("All Files", "*.*")]
-            )
-        if file_path:
-            self.app_path = file_path
-            self.path_display.configure(state="normal")
-            self.path_display.delete(0, "end")
-            self.path_display.insert(0, self.app_path)
-            self.path_display.configure(state="disabled")
-            self.save_config()
-            self.update_status(f"App Path Updated: {os.path.basename(file_path)}", "cyan")
+    def get_db_config(self):
+        return {
+            "host": self.config.get("db_host", "localhost"),
+            "port": self.config.get("db_port", 3306),
+            "user": self.config.get("db_user", "root"),
+            "password": self.config.get("db_password", ""),
+            "database": self.config.get("db_name", "opendental"),
+        }
 
-    # ---------- CSV Import ----------
+    # ══════════════════════════════════════════════
+    #  METHOD 1: Direct Database (Instant, Reliable)
+    # ══════════════════════════════════════════════
+    def start_db_thread(self):
+        self.disable_buttons()
+        threading.Thread(target=self.run_db_insert, daemon=True).start()
+
+    def run_db_insert(self):
+        try:
+            self.log("── Save to OpenDental Database ──", "#e94560")
+
+            # Step 1: Validate
+            self.log("[1/4] Validating patient data...")
+            patient = self.get_patient_from_gui()
+            is_valid, errors = patient.validate()
+            if not is_valid:
+                self.log(f"FAILED: {'; '.join(errors)}", "#e94560")
+                return
+            self.log(f"[1/4] Valid: {patient.first_name} {patient.last_name}")
+
+            # Step 2: Connect
+            self.log("[2/4] Connecting to database...")
+            db_config = self.get_db_config()
+
+            # Step 3: Insert
+            self.log("[3/4] Inserting patient record...")
+            result = insert_patient(patient, self.update_status, db_config)
+
+            if not result:
+                self.log("FAILED: Could not insert patient. Check database connection.", "#e94560")
+                return
+
+            # Step 4: Done
+            self.log(f"[4/4] SUCCESS! Patient #{result} saved.", "#4ecca3")
+            self.log(f"  Name: {patient.first_name} {patient.last_name}")
+            if patient.dob:
+                self.log(f"  DOB: {patient.dob}")
+            if patient.phone:
+                self.log(f"  Phone: {patient.phone}")
+            if patient.address:
+                self.log(f"  Address: {patient.address}, {patient.city}, {patient.state} {patient.zip}")
+            self.log("")
+            self.log("Open OpenDental > Select Patient > Search last name to verify.", "#888")
+
+            # Auto-launch OpenDental on Windows
+            if platform.system() == "Windows":
+                app_path = self.config.get("app_path", "")
+                if os.path.exists(app_path):
+                    self.log("Launching OpenDental...", "#888")
+                    subprocess.Popen([app_path])
+
+        except Exception as e:
+            self.log(f"ERROR: {e}", "#e94560")
+        finally:
+            self.enable_buttons()
+
+    # ══════════════════════════════════════════════
+    #  METHOD 2: GUI Automation (Visual, Windows)
+    # ══════════════════════════════════════════════
+    def start_gui_thread(self):
+        self.disable_buttons()
+        threading.Thread(target=self.run_gui_auto, daemon=True).start()
+
+    def run_gui_auto(self):
+        try:
+            self.log("── Open App & Fill Form ──", "#005b96")
+
+            # Validate
+            self.log("[1/10] Validating patient data...")
+            patient = self.get_patient_from_gui()
+            is_valid, errors = patient.validate()
+            if not is_valid:
+                self.log(f"FAILED: {'; '.join(errors)}", "#e94560")
+                return
+            self.log(f"[1/10] Valid: {patient.first_name} {patient.last_name}")
+
+            # Import here so Mac doesn't crash
+            from core.opendental_gui import automate_patient_entry
+
+            config = dict(self.timing)
+            config["app_path"] = self.config.get("app_path", "")
+
+            success = automate_patient_entry(patient, self.update_status, config)
+
+            if success:
+                self.log("")
+                self.log("Patient saved in OpenDental!", "#4ecca3")
+            else:
+                self.log("")
+                self.log("Automation failed. Try 'Save to OpenDental' (Database) instead.", "#e94560")
+
+        except Exception as e:
+            self.log(f"ERROR: {e}", "#e94560")
+        finally:
+            self.enable_buttons()
+
+    # ══════════════════════════════════════════════
+    #  CSV Batch Import
+    # ══════════════════════════════════════════════
     def import_csv(self):
         file_path = filedialog.askopenfilename(
             title="Select Patient CSV File",
@@ -342,364 +335,59 @@ class LegacyAutomationBot(ctk.CTk):
             ).start()
 
     def run_csv_batch(self, csv_path):
-        """Process CSV file in batch mode.
-        OpenDental must already be running for real mode."""
         try:
+            self.log("── CSV Batch Import ──", "#f0c040")
+
             rows = read_patients_csv(csv_path)
             log_path = os.path.join(os.path.dirname(csv_path), "batch_log.csv")
             completed = load_batch_log(log_path)
             total = len(rows)
+            db_config = self.get_db_config()
+
+            self.log(f"Loaded {total} patients from CSV")
+            success_count = 0
+            skip_count = 0
 
             for row_num, patient, is_valid, errors in rows:
                 if row_num in completed:
-                    self.update_status(f"Skipping row {row_num} (already done)", "cyan")
+                    self.log(f"  Row {row_num}: skipped (already done)")
+                    skip_count += 1
                     continue
+
                 if not is_valid:
                     write_batch_log_entry(
                         log_path, row_num, patient.last_name,
                         patient.first_name, "skipped", "; ".join(errors)
                     )
-                    self.update_status(f"Row {row_num}: skipped (missing required)", "orange")
+                    self.log(f"  Row {row_num}: skipped ({'; '.join(errors)})")
+                    skip_count += 1
                     continue
 
-                self.update_status(
-                    f"Patient {row_num}/{total}: {patient.first_name} {patient.last_name}",
-                    "yellow"
-                )
-                try:
-                    self._run_opendental_entry(patient)
-                    status = "partial" if errors else "success"
+                self.log(f"  Row {row_num}/{total}: {patient.first_name} {patient.last_name}...")
+
+                result = insert_patient(patient, self.update_status, db_config)
+                if result:
                     write_batch_log_entry(
                         log_path, row_num, patient.last_name,
-                        patient.first_name, status,
-                        "; ".join(errors) if errors else ""
+                        patient.first_name, "success", ""
                     )
-                except Exception as e:
+                    success_count += 1
+                else:
                     write_batch_log_entry(
                         log_path, row_num, patient.last_name,
-                        patient.first_name, "error", str(e)
+                        patient.first_name, "error", "insert failed"
                     )
-                    self.update_status(f"Row {row_num} error: {e}", "red")
 
-                time.sleep(self.timing["batch_patient_delay_s"])
-
-            self.update_status(f"Batch complete! {total} patients processed.", "limegreen")
-        except Exception as e:
-            self.update_status(f"CSV Error: {e}", "red")
-        finally:
-            self.enable_buttons()
-
-    # ---------- Shared OpenDental Entry ----------
-    def _run_opendental_entry(self, patient):
-        """Enter a single patient into OpenDental (assumes app is focused)."""
-        navigate_to_add_patient(self.update_status, self.timing)
-        field_errors = enter_patient_fields(patient, self.update_status, self.timing)
-        save_patient(self.update_status)
-        if field_errors:
-            self.update_status(
-                f"Saved with warnings: {', '.join(field_errors)}", "orange"
-            )
-        else:
-            name = f"{patient.first_name} {patient.last_name}"
-            self.update_status(f"Patient Saved: {name}", "limegreen")
-
-    # ---------- Open App & Fill (GUI Automation) ----------
-    def start_gui_auto_thread(self):
-        self.disable_buttons()
-        threading.Thread(target=self.run_gui_auto, daemon=True).start()
-
-    def run_gui_auto(self):
-        """Open OpenDental and fill the patient form automatically."""
-        try:
-            patient = self.get_patient_from_gui()
-            is_valid, errors = patient.validate()
-            if not is_valid:
-                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
-                return
-
-            # Load config for timing and app path
-            config = dict(self.timing)
-            config["app_path"] = self.app_path
-
-            success = automate_patient_entry(patient, self.update_status, config)
-            if not success:
-                self.update_status("Automation failed — check error above", "red")
-        except Exception as e:
-            self.update_status(f"GUI Auto Error: {e}", "red")
-        finally:
-            self.enable_buttons()
-
-    # ---------- Direct Database (Most Reliable) ----------
-    def start_db_thread(self):
-        self.disable_buttons()
-        threading.Thread(target=self.run_db_insert, daemon=True).start()
-
-    def run_db_insert(self):
-        """Insert patient directly into OpenDental database. Works on any platform."""
-        try:
-            patient = self.get_patient_from_gui()
-            is_valid, errors = patient.validate()
-            if not is_valid:
-                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
-                return
-
-            # Load DB config from config.json or use defaults
-            db_config = {
-                "host": "localhost",
-                "port": 3306,
-                "user": "root",
-                "password": "",
-                "database": "opendental"
-            }
-            if os.path.exists(self.config_file):
-                try:
-                    with open(self.config_file, 'r') as f:
-                        data = json.load(f)
-                        if "db_host" in data:
-                            db_config["host"] = data["db_host"]
-                        if "db_port" in data:
-                            db_config["port"] = data["db_port"]
-                        if "db_user" in data:
-                            db_config["user"] = data["db_user"]
-                        if "db_password" in data:
-                            db_config["password"] = data["db_password"]
-                        if "db_name" in data:
-                            db_config["database"] = data["db_name"]
-                except (json.JSONDecodeError, IOError):
-                    pass
-
-            self.update_status("Step 1/3: Validating patient data...", "yellow")
-            time.sleep(0.3)
-
-            self.update_status("Step 2/3: Inserting into database...", "yellow")
-            result = insert_patient(patient, self.update_status, db_config)
-
-            if result:
-                self.update_status(
-                    f"Step 3/3: Patient #{result} {patient.first_name} {patient.last_name} saved!",
-                    "limegreen"
-                )
-
-                # Auto-open OpenDental if on Windows
-                if platform.system() == "Windows":
-                    time.sleep(1)
-                    self.update_status("Opening OpenDental to show the patient...", "cyan")
-                    try:
-                        app_path = self.app_path
-                        if os.path.exists(app_path):
-                            subprocess.Popen([app_path])
-                            self.update_status(
-                                f"DONE! Patient #{result} saved. Search '{patient.last_name}' in OpenDental.",
-                                "limegreen"
-                            )
-                        else:
-                            self.update_status(
-                                f"DONE! Patient #{result} saved. Open OpenDental and search '{patient.last_name}'.",
-                                "limegreen"
-                            )
-                    except Exception:
-                        self.update_status(
-                            f"DONE! Patient #{result} saved. Open OpenDental and search '{patient.last_name}'.",
-                            "limegreen"
-                        )
-        except Exception as e:
-            self.update_status(f"DB Error: {e}", "red")
-        finally:
-            self.enable_buttons()
-
-    # ---------- Browser Automation (Cross-Platform) ----------
-    def start_browser_thread(self):
-        self.disable_buttons()
-        threading.Thread(target=self.run_browser, daemon=True).start()
-
-    def run_browser(self):
-        """Open browser and fill patient form. Works on Mac, Windows, Linux."""
-        try:
-            patient = self.get_patient_from_gui()
-            is_valid, errors = patient.validate()
-            if not is_valid:
-                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
-                return
-            run_browser_automation(patient, self.update_status)
-        except Exception as e:
-            self.update_status(f"Browser Error: {e}", "red")
-        finally:
-            self.enable_buttons()
-
-    # ---------- Test / Dry Run Mode ----------
-    def start_dryrun_thread(self):
-        self.disable_buttons()
-        threading.Thread(target=self.run_dryrun, daemon=True).start()
-
-    def run_dryrun(self):
-        """Simulate automation without touching any app. Works on any OS."""
-        try:
-            patient = self.get_patient_from_gui()
-            is_valid, errors = patient.validate()
-            if not is_valid:
-                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
-                return
-            dry_run(patient, self.update_status)
-        except Exception as e:
-            self.update_status(f"Dry Run Error: {e}", "red")
-        finally:
-            self.enable_buttons()
-
-    # ---------- Demo Mode (TextEdit/Notepad) ----------
-    def start_demo_thread(self):
-        self.disable_buttons()
-        threading.Thread(target=self.run_demo, daemon=True).start()
-
-    def run_demo(self):
-        """Open a text editor and type patient data into it. Proves automation works on any OS."""
-        try:
-            patient = self.get_patient_from_gui()
-            is_valid, errors = patient.validate()
-            if not is_valid:
-                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
-                return
-
-            self.update_status("Opening text editor for demo...", "yellow")
-
-            if platform.system() == "Darwin":
-                os.system("open -a TextEdit")
-                time.sleep(2)
-                os.system("osascript -e 'tell application \"TextEdit\" to activate'")
-                # Create new doc
-                pyautogui.hotkey('command', 'n')
-                time.sleep(1)
-            elif platform.system() == "Windows":
-                subprocess.Popen(["notepad.exe"])
-                time.sleep(2)
-            else:
-                # Linux
-                for editor in ["gedit", "xed", "mousepad", "nano"]:
-                    try:
-                        subprocess.Popen([editor])
-                        time.sleep(2)
-                        break
-                    except FileNotFoundError:
-                        continue
-
-            self.update_status("Typing patient data into editor...", "yellow")
-            enter_patient_fields_plain(patient, self.update_status, self.timing)
-
-            self.update_status("Demo complete! Check the text editor.", "limegreen")
-        except Exception as e:
-            self.update_status(f"Demo Error: {e}", "red")
-        finally:
-            self.enable_buttons()
-
-    # ---------- PyWinAuto Engine (Windows Only) ----------
-    def start_pywinauto_thread(self):
-        self.disable_buttons()
-        threading.Thread(target=self.run_pywinauto, daemon=True).start()
-
-    def run_pywinauto(self):
-        if platform.system() != "Windows":
-            self.update_status("Error: PyWinAuto ONLY works on Windows!", "red")
-            self.enable_buttons()
-            return
-
-        try:
-            patient = self.get_patient_from_gui()
-            is_valid, errors = patient.validate()
-            if not is_valid:
-                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
-                self.enable_buttons()
-                return
-
-            app_name = os.path.basename(self.app_path)
-
-            if not launch_app(self.app_path, self.update_status, self.timing):
-                self.enable_buttons()
-                return
-
-            # Connect via PyWinAuto UIA
-            self.update_status("Connecting to application...", "yellow")
-            try:
-                app = Application(backend="uia").connect(path=self.app_path, timeout=15)
-            except Exception:
-                app = Application(backend="uia").connect(
-                    title_re=f".*{app_name.split('.')[0]}.*", timeout=15
-                )
-
-            main_window = app.top_window()
-            main_window.set_focus()
-
-            if "opendental" in app_name.lower():
-                self._run_opendental_entry(patient)
-            else:
-                self._run_word_automation(app, patient)
+            self.log("")
+            self.log(f"Batch complete: {success_count} saved, {skip_count} skipped, {total} total", "#4ecca3")
+            self.log("Open OpenDental to verify all patients.", "#888")
 
         except Exception as e:
-            self.update_status(f"Execution Error: {e}", "red")
+            self.log(f"CSV Error: {e}", "#e94560")
         finally:
             self.enable_buttons()
-
-    # ---------- PyAutoGUI Engine (Cross-Platform) ----------
-    def start_pyautogui_thread(self):
-        self.disable_buttons()
-        threading.Thread(target=self.run_pyautogui, daemon=True).start()
-
-    def run_pyautogui(self):
-        try:
-            patient = self.get_patient_from_gui()
-            is_valid, errors = patient.validate()
-            if not is_valid:
-                self.update_status(f"Validation failed: {'; '.join(errors)}", "red")
-                self.enable_buttons()
-                return
-
-            app_name = os.path.basename(self.app_path)
-
-            if not launch_app(self.app_path, self.update_status, self.timing):
-                self.enable_buttons()
-                return
-
-            if "opendental" in app_name.lower():
-                self._run_opendental_entry(patient)
-            else:
-                self.update_status("Non-OpenDental mode: typing patient data...", "orange")
-                enter_patient_fields_plain(patient, self.update_status, self.timing)
-                self.update_status("Automation Complete!", "limegreen")
-
-        except Exception as e:
-            self.update_status(f"PyAutoGUI Error: {e}", "red")
-        finally:
-            self.enable_buttons()
-
-    # ---------- Word Fallback (Windows only) ----------
-    def _run_word_automation(self, app, patient):
-        self.update_status("Selecting 'Blank Document'...", "yellow")
-        pyautogui.press('enter')
-        time.sleep(4)
-
-        doc_window = app.top_window()
-        doc_window.set_focus()
-        time.sleep(1)
-
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        text = (
-            f"Automated Patient Entry (Pro Mode)\n"
-            f"First Name: {patient.first_name}\n"
-            f"Last Name: {patient.last_name}\n"
-            f"Entry Time: {timestamp}"
-        )
-        pyautogui.write(text, interval=0.05)
-        time.sleep(1)
-
-        pyautogui.press('f12')
-        time.sleep(2)
-        safe_fn = "".join(x for x in patient.first_name if x.isalnum())
-        safe_ln = "".join(x for x in patient.last_name if x.isalnum())
-        pyautogui.write(f"Patient_{safe_fn}_{safe_ln}_{timestamp}")
-        time.sleep(1)
-        pyautogui.press('enter')
-        self.update_status("Document saved!", "limegreen")
 
 
 if __name__ == "__main__":
-    pyautogui.FAILSAFE = True
-    app = LegacyAutomationBot()
+    app = PracticeManagementBot()
     app.mainloop()

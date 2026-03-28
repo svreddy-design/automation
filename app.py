@@ -241,7 +241,11 @@ class PracticeManagementBot(ctk.CTk):
                 self.log("Cancelled by user.", "#888")
                 return
 
-            # Step 3: Run automation
+            # Step 3: Disable topmost so bot doesn't steal focus from OpenDental
+            self.after(0, lambda: self.attributes("-topmost", False))
+            time.sleep(0.2)
+
+            # Step 4: Run automation
             from core.opendental_gui import automate_patient_entry
 
             config = dict(self.timing)
@@ -259,6 +263,8 @@ class PracticeManagementBot(ctk.CTk):
         except Exception as e:
             self.log(f"ERROR: {e}", "#e94560")
         finally:
+            # Restore topmost after automation
+            self.after(0, lambda: self.attributes("-topmost", True))
             self.enable_buttons()
 
     # ══════════════════════════════════════════════
@@ -278,6 +284,9 @@ class PracticeManagementBot(ctk.CTk):
     def run_csv_batch(self, csv_path):
         try:
             self.log("── CSV Batch Import (GUI Automation) ──", "#f0c040")
+            # Disable topmost so bot doesn't steal focus
+            self.after(0, lambda: self.attributes("-topmost", False))
+            time.sleep(0.2)
 
             from core.opendental_gui import automate_patient_entry
 
@@ -352,6 +361,7 @@ class PracticeManagementBot(ctk.CTk):
         except Exception as e:
             self.log(f"CSV Error: {e}", "#e94560")
         finally:
+            self.after(0, lambda: self.attributes("-topmost", True))
             self.enable_buttons()
 
 

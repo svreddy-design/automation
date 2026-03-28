@@ -386,84 +386,105 @@ def automate_patient_entry(patient, status_callback, config=None):
             else:
                 _log(status_callback, f"[5/8] WARNING — Can't confirm Edit Patient (got '{screen}'), continuing...", "orange")
 
-        # ═══ STEP 6: Fill Form ═══
+        # ═══ STEP 6: Fill Form (direct auto_id field access) ═══
         _log(status_callback, "[6/8] Filling patient form...", "yellow")
         time.sleep(1)
 
-        # pyautogui Tab+type through the Edit Patient form fields
-        # The cursor should be on the first field (Last Name) after the form opens
+        main_win = app.top_window()
 
-        fields_to_enter = [
-            ("last_name", patient.last_name),
-            ("first_name", patient.first_name),
-            ("middle_initial", patient.middle_initial),
-            ("preferred_name", patient.preferred_name),
+        # Map patient fields to OpenDental Edit Patient auto_ids
+        # From diagnostic: all fields are [Edit] controls findable by auto_id
+        field_map = [
+            ("last_name",    patient.last_name,      "textLName"),
+            ("first_name",   patient.first_name,     "textFName"),
+            ("middle_initial", patient.middle_initial, "textMiddleI"),
+            ("preferred_name", patient.preferred_name, "textPreferred"),
+            ("phone",        patient.phone,           "textHmPhone"),
+            ("address",      patient.address,         "textAddress"),
+            ("city",         patient.city,            "textCity"),
+            ("state",        patient.state,           "textState"),
+            ("zip",          patient.zip,             "textZip"),
+            ("ssn",          patient.ssn,             "textSSN"),
         ]
 
-        for field_name, value in fields_to_enter:
-            if value:
-                display = _mask(field_name, value)
-                _log(status_callback, f"  {field_name} = {display}", "yellow")
-                pyautogui.hotkey('ctrl', 'a')
-                pyautogui.write(value, interval=typing_interval)
-            pyautogui.press('tab')
-            time.sleep(field_delay)
-
-        # Gender (dropdown)
-        if patient.gender:
-            _log(status_callback, f"  gender = {patient.gender}", "yellow")
-            gender_map = {"male": 1, "female": 2, "unknown": 3}
-            presses = gender_map.get(patient.gender.lower(), 0)
-            for _ in range(presses):
-                pyautogui.press('down')
-                time.sleep(0.1)
-        pyautogui.press('tab')
-        time.sleep(field_delay)
-
-        remaining_fields = [
-            ("dob", patient.dob),
-            ("ssn", patient.ssn),
-            ("address", patient.address),
-            ("city", patient.city),
-            ("state", patient.state),
-            ("zip", patient.zip),
-            ("phone", patient.phone),
-        ]
-
-        for field_name, value in remaining_fields:
-            if value:
-                display = _mask(field_name, value)
-                _log(status_callback, f"  {field_name} = {display}", "yellow")
-                if field_name == "dob":
-                    digits = value.replace("/", "")
-                    pyautogui.write(digits, interval=typing_interval)
-                else:
+        for field_name, value, auto_id in field_map:
+            if not value:
+                continue
+            display = _mask(field_name, value)
+            try:
+                field = main_win.child_window(auto_id=auto_id, control_type="Edit")
+                if field.exists(timeout=1):
+                    fr = field.rectangle()
+                    cx = (fr.left + fr.right) // 2
+                    cy = (fr.top + fr.bottom) // 2
+                    pyautogui.click(cx, cy)
+                    time.sleep(0.2)
                     pyautogui.hotkey('ctrl', 'a')
                     pyautogui.write(value, interval=typing_interval)
-            pyautogui.press('tab')
+                    _log(status_callback, f"  {field_name} = {display} [OK]", "yellow")
+                else:
+                    _log(status_callback, f"  {field_name}: field not found ({auto_id})", "orange")
+            except Exception as e:
+                _log(status_callback, f"  {field_name}: error — {e}", "orange")
             time.sleep(field_delay)
+
+        # Birthdate (special: auto_id='textDate' but there are multiple textDate fields)
+        # Use the one inside FormPatientEdit area, approx rect (L408, T383)
+        if patient.dob:
+            display = _mask("dob", patient.dob)
+            try:
+                # Find all textDate fields, pick the one in the left column (x < 600)
+                dates = main_win.children(auto_id="textDate", control_type="Edit")
+                for d in dates:
+                    dr = d.rectangle()
+                    if dr.left < 600:  # left column = patient info area
+                        cx = (dr.left + dr.right) // 2
+                        cy = (dr.top + dr.bottom) // 2
+                        pyautogui.click(cx, cy)
+                        time.sleep(0.2)
+                        pyautogui.hotkey('ctrl', 'a')
+                        digits = patient.dob.replace("/", "")
+                        pyautogui.write(digits, interval=typing_interval)
+                        _log(status_callback, f"  dob = {display} [OK]", "yellow")
+                        break
+            except Exception as e:
+                _log(status_callback, f"  dob: error — {e}", "orange")
+            time.sleep(field_delay)
+
+        # Gender (listbox — need to click the right item)
+        if patient.gender:
+            _log(status_callback, f"  gender = {patient.gender}", "yellow")
+            try:
+                items = main_win.descendants(control_type="ListItem")
+                for item in items:
+                    try:
+                        if item.window_text() == patient.gender:
+                            ir = item.rectangle()
+                            pyautogui.click((ir.left + ir.right) // 2,
+                                            (ir.top + ir.bottom) // 2)
+                            _log(status_callback, f"  gender = {patient.gender} [OK]", "yellow")
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
 
         _log(status_callback, "[6/8] DONE — Form filled!", "limegreen")
 
         # ═══ STEP 7: Save ═══
         _log(status_callback, "[7/8] Saving...", "yellow")
 
-        # Try pywinauto first (find Save/OK button)
+        # Find Save button by auto_id and click with pyautogui
         saved = False
         try:
-            main_win = app.top_window()
-            for aid in ["butOK", "butSave"]:
-                try:
-                    btn = main_win.child_window(auto_id=aid)
-                    if btn.exists(timeout=1):
-                        br = btn.rectangle()
-                        pyautogui.click((br.left + br.right) // 2,
-                                        (br.top + br.bottom) // 2)
-                        saved = True
-                        _log(status_callback, f"  Clicked {aid}!", "cyan")
-                        break
-                except Exception:
-                    continue
+            save_btn = main_win.child_window(auto_id="butSave")
+            if save_btn.exists(timeout=2):
+                sr = save_btn.rectangle()
+                cx = (sr.left + sr.right) // 2
+                cy = (sr.top + sr.bottom) // 2
+                _log(status_callback, f"  Found Save at ({cx}, {cy})", "cyan")
+                pyautogui.click(cx, cy)
+                saved = True
         except Exception:
             pass
 

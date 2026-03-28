@@ -287,33 +287,23 @@ def automate_patient_entry(patient, status_callback, config=None):
         else:
             _log(status_callback, "[4/6] Clicking Add Pt...", "yellow")
 
-            # pywinauto CAN see this button via auto_id
             main_win = app.top_window()
             clicked = False
 
+            # Find butAddPatient by auto_id and get its screen coordinates
             try:
                 add_btn = main_win.child_window(auto_id="butAddPatient")
                 if add_btn.exists(timeout=2):
-                    add_btn.click_input()
+                    # Get button center coordinates and click with pyautogui
+                    # (click_input() doesn't work on OpenDental's Custom controls)
+                    btn_rect = add_btn.rectangle()
+                    cx = (btn_rect.left + btn_rect.right) // 2
+                    cy = (btn_rect.top + btn_rect.bottom) // 2
+                    _log(status_callback, f"  Found butAddPatient at ({cx}, {cy})", "cyan")
+                    pyautogui.click(cx, cy)
                     clicked = True
-                    _log(status_callback, "  Clicked butAddPatient!", "cyan")
             except Exception as e:
                 _log(status_callback, f"  auto_id search failed: {e}", "orange")
-
-            if not clicked:
-                # Fallback: scan for any control with "Add Pt" text
-                try:
-                    for desc in main_win.descendants():
-                        try:
-                            if "Add Pt" in desc.window_text():
-                                desc.click_input()
-                                clicked = True
-                                _log(status_callback, "  Found Add Pt by text scan!", "cyan")
-                                break
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
 
             if not clicked:
                 _log(status_callback, "[4/6] FAILED — Could not find Add Pt!", "red")

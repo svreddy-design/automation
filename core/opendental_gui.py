@@ -354,26 +354,23 @@ def automate_patient_entry(patient, status_callback, config=None):
 
             time.sleep(1.5)
 
-            # Dismiss popup: "Trial version. Maximum 30 patients"
-            _log(status_callback, "  Dismissing trial popup...", "cyan")
-            pyautogui.press('enter')
-            time.sleep(1)
-
-            # Dismiss popup: "Not allowed to add... do a search first"
-            # (We already searched, so this shouldn't appear, but just in case)
-            _log(status_callback, "  Dismissing any remaining popups...", "cyan")
-            pyautogui.press('enter')
-            time.sleep(2)
-
-            # Check if Edit Patient opened
+            # Smart popup handling: only dismiss popups that actually appear
+            # Trial version: "Maximum 30 patients" popup
+            # Search required: "Not allowed to add..." popup
+            # Paid versions may not show any popups at all
             app = _reconnect(app)
             for _ in range(5):
                 screen, win, title = identify_screen(app)
                 if screen == "edit_patient":
+                    # No popups — went straight to Edit Patient (paid version)
                     break
-                elif screen in ("popup", "alerts"):
-                    _log(status_callback, f"  Popup: pressing OK...", "cyan")
+                elif screen in ("popup", "alerts", "unknown"):
+                    _log(status_callback, f"  Popup detected — pressing OK...", "cyan")
                     pyautogui.press('enter')
+                    time.sleep(1.5)
+                    app = _reconnect(app)
+                elif screen == "select_patient":
+                    # Still on Select Patient — might need more time
                     time.sleep(1)
                     app = _reconnect(app)
                 else:

@@ -14,3 +14,12 @@ dist/
 
 # Generated Docs
 *.docx
+
+# Claude/AI config
+CLAUDE.md
+.agents/
+
+# Dev/debug scripts
+diagnose*.py
+tasks/
+docs/

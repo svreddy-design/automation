@@ -487,46 +487,53 @@ def automate_patient_entry(patient, status_callback, config=None):
             win.set_focus()
             time.sleep(action_delay)
 
-            # Strategy 1: Find button via configured locator
             clicked = False
+
+            # Strategy 1: Try configured locator (SplitButton, Button, etc.)
             btn = find_element(win, locators["select_patient_btn"], status_callback)
             if btn:
                 btn.click_input()
                 clicked = True
 
-            # Strategy 2: Scan ALL descendants for anything with "Select Patient" text
+            # Strategy 2: Find ToolBar control and use its button() method
             if not clicked:
-                _log(status_callback, "  Scanning all controls for 'Select Patient'...", "cyan")
+                _log(status_callback, "  Looking for ToolBar controls...", "cyan")
                 try:
-                    for desc in win.descendants():
+                    toolbars = win.descendants(control_type="ToolBar")
+                    for tb in toolbars:
                         try:
-                            text = desc.window_text()
-                            if "Select Patient" in text:
-                                _log(status_callback,
-                                     f"  Found: '{text}' (type={desc.element_info.control_type})", "cyan")
-                                desc.click_input()
-                                clicked = True
-                                break
+                            tb_btn = tb.button("Select Patient")
+                            tb_btn.click()
+                            clicked = True
+                            _log(status_callback, "  Found via ToolBar.button()!", "cyan")
+                            break
                         except Exception:
                             continue
                 except Exception:
                     pass
 
-            # Strategy 3: Try keyboard shortcuts
+            # Strategy 3: Click "Select Patient" area in the toolbar by position
+            # OpenDental toolbar: Select Patient is always the first button (leftmost)
             if not clicked:
-                _log(status_callback, "  Trying keyboard shortcuts...", "cyan")
-                # Try both common shortcuts
-                pwa_keyboard.send_keys('^p')
-                time.sleep(1)
-                screen_check, _, _ = identify_screen(app)
-                if screen_check != "select_patient":
-                    pwa_keyboard.send_keys('^s')
-                    time.sleep(1)
+                _log(status_callback, "  Clicking toolbar area for Select Patient...", "cyan")
+                try:
+                    # Find the toolbar strip (usually a Pane or ToolBar near the top)
+                    rect = win.rectangle()
+                    # Toolbar is at the top of the window, Select Patient is the first button
+                    # Typical position: ~90px from left, ~88px from top of window
+                    toolbar_x = rect.left + 90
+                    toolbar_y = rect.top + 88
+                    from pywinauto import mouse as pwa_mouse
+                    pwa_mouse.click(coords=(toolbar_x, toolbar_y))
+                    clicked = True
+                    _log(status_callback, f"  Clicked toolbar at ({toolbar_x}, {toolbar_y})", "cyan")
+                except Exception as e:
+                    _log(status_callback, f"  Toolbar click failed: {e}", "orange")
 
-            time.sleep(action_delay)
+            time.sleep(1.5)
 
             # Verify we arrived at Select Patient
-            for retry in range(5):
+            for retry in range(8):
                 app = _reconnect(app)
                 app = dismiss_all_dialogs(app, status_callback)
                 screen, win, title = identify_screen(app)
@@ -536,9 +543,14 @@ def automate_patient_entry(patient, status_callback, config=None):
                     _dismiss(screen, win, status_callback)
                     time.sleep(0.5)
                 elif screen == "main_window" and retry < 3:
-                    # Still on main — retry with keyboard shortcuts
-                    _log(status_callback, f"  Retry {retry + 1}: sending Ctrl+P...", "cyan")
-                    pwa_keyboard.send_keys('^p')
+                    # Retry clicking toolbar area with slightly different offset
+                    _log(status_callback, f"  Retry {retry + 1}: clicking toolbar again...", "cyan")
+                    try:
+                        rect = win.rectangle()
+                        from pywinauto import mouse as pwa_mouse
+                        pwa_mouse.click(coords=(rect.left + 90, rect.top + 88))
+                    except Exception:
+                        pass
                     time.sleep(1.5)
                 else:
                     time.sleep(0.5)

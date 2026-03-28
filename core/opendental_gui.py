@@ -47,50 +47,65 @@ def _mask(field_name, value):
 
 def identify_screen(app):
     """Identify current OpenDental screen. Returns (screen_type, window, title).
-    Uses system-wide window search because OpenDental's dialogs (Select Patient,
-    Edit Patient) are child windows that app.top_window() and app.windows() miss.
-    Screen types: choose_database, alerts, select_patient, edit_patient,
-    popup, main_window, unknown, error."""
+
+    OpenDental opens Select Patient and Edit Patient as TABS/PANELS inside
+    the main window (title stays 'Demo Database {Admin}'). So we detect
+    screens by looking for unique controls INSIDE the window, not by title.
+
+    Detection rules:
+    - select_patient: has 'Add Pt' button (unique to Select Patient panel)
+    - edit_patient: has 'Save' button + patient form fields
+    - choose_database: window title contains 'Choose Database'
+    - alerts: window title contains 'Alert'
+    """
     from pywinauto import Desktop
 
     try:
-        # Search ALL visible windows on the desktop for OpenDental dialogs
-        # This catches child/owned windows that app.windows() misses
+        # Check for popup/dialog windows first (these ARE separate windows)
         try:
             desktop = Desktop(backend="uia")
             for dwin in desktop.windows():
                 try:
                     t = dwin.window_text()
-                    if "Select Patient" in t:
+                    if "Choose Database" in t:
+                        return "choose_database", dwin, t
+                    if "Alert" in t and "Alerts (0)" not in t:
+                        return "alerts", dwin, t
+                    # Some OD versions DO open Select Patient as a separate window
+                    if t == "Select Patient":
                         return "select_patient", dwin, t
                     if "Edit Patient" in t:
                         return "edit_patient", dwin, t
-                    if "Choose Database" in t:
-                        return "choose_database", dwin, t
                 except Exception:
                     continue
         except Exception:
             pass
 
-        # Fall back to app.top_window for main window / popup detection
+        # Now check the main window's CONTENTS for embedded panels
         win = app.top_window()
         title = win.window_text()
         rect = win.rectangle()
         width = rect.right - rect.left
         height = rect.bottom - rect.top
 
-        if "Alert" in title:
-            return "alerts", win, title
-        if "Select Patient" in title:
-            return "select_patient", win, title
-        if "Edit Patient" in title:
-            return "edit_patient", win, title
-
-        # Small window = popup dialog
+        # Small separate window = popup
         if width < 600 and height < 400 and width > 50:
             return "popup", win, title
 
-        # Main OpenDental window
+        # Check if Select Patient panel is open (look for "Add Pt" button)
+        try:
+            descs = win.descendants(control_type="Button")
+            for btn in descs:
+                try:
+                    btn_text = btn.window_text()
+                    if "Add Pt" in btn_text:
+                        return "select_patient", win, title
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # Main OpenDental window (no special panel detected)
         if "Open Dental" in title or "Demo Database" in title:
             return "main_window", win, title
 

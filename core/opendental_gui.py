@@ -56,25 +56,16 @@ def identify_screen(app):
         if "Alert" in title and "Alerts" not in title:
             return "alerts", win, title
 
-        # Check for popup dialogs ON TOP (trial version, errors, confirmations)
-        # These are small separate windows — check all desktop windows
-        from pywinauto import Desktop
-        try:
-            for dwin in Desktop(backend="uia").windows():
-                try:
-                    dt = dwin.window_text()
-                    dr = dwin.rectangle()
-                    dw = dr.right - dr.left
-                    dh = dr.bottom - dr.top
-                    # Small window that's not the main OD window = popup
-                    if (dw < 600 and dh < 400 and dw > 50 and
-                            "Open Dental" not in dt and "Demo Database" not in dt and
-                            "Practice Management" not in dt):
-                        return "popup", dwin, dt
-                except Exception:
-                    continue
-        except Exception:
-            pass
+        # Small popup window (by title — fast check)
+        if "Choose Database" not in title and "Open Dental" not in title and "Demo Database" not in title:
+            try:
+                rect = win.rectangle()
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+                if w < 600 and h < 400 and w > 50:
+                    return "popup", win, title
+            except Exception:
+                pass
 
         # Check for Edit Patient BEFORE Select Patient
         # (Edit Patient opens on top of Select Patient)
@@ -378,27 +369,22 @@ def automate_patient_entry(patient, status_callback, config=None):
 
             time.sleep(1.5)
 
-            # Smart popup handling: only dismiss popups that actually appear
-            # Trial version: "Maximum 30 patients" popup
-            # Search required: "Not allowed to add..." popup
-            # Paid versions may not show any popups at all
+            # After clicking Add Pt, OpenDental may show popups:
+            # - "Trial version. Maximum 30 patients" → press Enter
+            # - "Not allowed to add...do a search first" → press Enter
+            # Paid versions skip these popups entirely.
+            # Strategy: check for edit_patient, if not found press Enter and check again
             app = _reconnect(app)
-            for _ in range(5):
+            for attempt in range(6):
                 screen, win, title = identify_screen(app)
                 if screen == "edit_patient":
-                    # No popups — went straight to Edit Patient (paid version)
+                    _log(status_callback, "  Edit Patient detected!", "cyan")
                     break
-                elif screen in ("popup", "alerts", "unknown"):
-                    _log(status_callback, f"  Popup detected — pressing OK...", "cyan")
+                else:
+                    # Either a popup or still on select_patient — press Enter to dismiss
+                    _log(status_callback, f"  Attempt {attempt+1}: screen='{screen}', pressing Enter...", "cyan")
                     pyautogui.press('enter')
                     time.sleep(1.5)
-                    app = _reconnect(app)
-                elif screen == "select_patient":
-                    # Still on Select Patient — might need more time
-                    time.sleep(1)
-                    app = _reconnect(app)
-                else:
-                    time.sleep(1)
                     app = _reconnect(app)
 
             screen, win, title = identify_screen(app)

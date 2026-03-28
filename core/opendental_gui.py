@@ -48,68 +48,53 @@ def _mask(field_name, value):
 def identify_screen(app):
     """Identify current OpenDental screen. Returns (screen_type, window, title).
 
-    OpenDental opens Select Patient and Edit Patient as TABS/PANELS inside
-    the main window (title stays 'Demo Database {Admin}'). So we detect
-    screens by looking for unique controls INSIDE the window, not by title.
-
-    Detection rules:
-    - select_patient: has 'Add Pt' button (unique to Select Patient panel)
-    - edit_patient: has 'Save' button + patient form fields
-    - choose_database: window title contains 'Choose Database'
-    - alerts: window title contains 'Alert'
+    OpenDental uses custom WinForms controls. Key identifiers from diagnostics:
+    - Select Patient: child Window with auto_id='FormPatientSelect'
+    - Edit Patient: child Window with auto_id containing 'FormPatientEdit' or title 'Edit Patient'
+    - Choose Database: separate window with 'Choose Database' in title
+    - Add Pt button: Custom control (NOT Button), text='_Add Pt'
     """
-    from pywinauto import Desktop
-
     try:
-        # Check for popup/dialog windows first (these ARE separate windows)
-        try:
-            desktop = Desktop(backend="uia")
-            for dwin in desktop.windows():
-                try:
-                    t = dwin.window_text()
-                    if "Choose Database" in t:
-                        return "choose_database", dwin, t
-                    if "Alert" in t and "Alerts (0)" not in t:
-                        return "alerts", dwin, t
-                    # Some OD versions DO open Select Patient as a separate window
-                    if t == "Select Patient":
-                        return "select_patient", dwin, t
-                    if "Edit Patient" in t:
-                        return "edit_patient", dwin, t
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
-        # Now check the main window's CONTENTS for embedded panels
         win = app.top_window()
         title = win.window_text()
-        rect = win.rectangle()
-        width = rect.right - rect.left
-        height = rect.bottom - rect.top
+
+        # Check for separate popup windows by title
+        if "Choose Database" in title:
+            return "choose_database", win, title
+        if "Alert" in title and "Alerts" not in title:
+            return "alerts", win, title
+
+        # Check for Select Patient child window (auto_id='FormPatientSelect')
+        try:
+            sp = win.child_window(auto_id="FormPatientSelect")
+            if sp.exists(timeout=0.5):
+                return "select_patient", sp, title
+        except Exception:
+            pass
+
+        # Check for Edit Patient child window
+        try:
+            ep = win.child_window(auto_id="FormPatientEdit")
+            if ep.exists(timeout=0.3):
+                return "edit_patient", ep, title
+        except Exception:
+            pass
+
+        # Fallback: check window title for Edit Patient
+        if "Edit Patient" in title:
+            return "edit_patient", win, title
 
         # Small separate window = popup
-        if width < 600 and height < 400 and width > 50:
-            return "popup", win, title
-
-        # Check if Select Patient panel is open inside the main window
-        # (OpenDental opens it as a tab, not a separate window)
-        # Use fast child_window search instead of slow descendants() scan
         try:
-            add_pt = win.child_window(title_re=".*Add Pt.*", control_type="Button")
-            if add_pt.exists(timeout=0.5):
-                return "select_patient", win, title
-        except Exception:
-            pass
-        # Also check for Select Patient tab at bottom of window
-        try:
-            sp_tab = win.child_window(title="Select Patient", control_type="TabItem")
-            if sp_tab.exists(timeout=0.3):
-                return "select_patient", win, title
+            rect = win.rectangle()
+            width = rect.right - rect.left
+            height = rect.bottom - rect.top
+            if width < 600 and height < 400 and width > 50:
+                return "popup", win, title
         except Exception:
             pass
 
-        # Main OpenDental window (no special panel detected)
+        # Main OpenDental window
         if "Open Dental" in title or "Demo Database" in title:
             return "main_window", win, title
 
@@ -647,23 +632,49 @@ def automate_patient_entry(patient, status_callback, config=None):
         else:
             _log(status_callback, "[5/7] Clicking Add Pt...", "yellow")
 
-            sel_win = app.top_window()
-            btn = find_element(sel_win, locators["add_pt_btn"], status_callback)
-            if btn:
-                btn.click_input()
-            else:
-                # Scan all buttons for "Add Pt" text
-                added = False
+            main_win = app.top_window()
+            added = False
+
+            # Strategy 1: Find by auto_id (most reliable)
+            try:
+                add_btn = main_win.child_window(auto_id="butAddPt")
+                if add_btn.exists(timeout=1):
+                    add_btn.click_input()
+                    added = True
+                    _log(status_callback, "  Found Add Pt via auto_id!", "cyan")
+            except Exception:
+                pass
+
+            # Strategy 2: Find by text "_Add Pt" (OD uses underscore prefix)
+            if not added:
                 try:
-                    for b in sel_win.descendants(control_type="Button"):
-                        if "Add Pt" in b.window_text():
-                            b.click_input()
-                            added = True
-                            break
+                    for desc in main_win.descendants(control_type="Custom"):
+                        try:
+                            if desc.element_info.automation_id == "butAddPt":
+                                desc.click_input()
+                                added = True
+                                break
+                        except Exception:
+                            continue
                 except Exception:
                     pass
-                if not added:
-                    pwa_keyboard.send_keys('%a')
+
+            # Strategy 3: Scan all descendants for "Add Pt" text
+            if not added:
+                try:
+                    for desc in main_win.descendants():
+                        try:
+                            if "Add Pt" in desc.window_text():
+                                desc.click_input()
+                                added = True
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            if not added:
+                _log(status_callback, "  Could not find Add Pt button!", "red")
 
             time.sleep(action_delay)
 

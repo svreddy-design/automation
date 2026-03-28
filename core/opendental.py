@@ -24,13 +24,20 @@ OPENDENTAL_PATHS = [
 ]
 
 # Default UI element locators — override in config.json for different OD versions
+# OpenDental uses Custom controls (not standard Button/Edit), identified via auto_id
 DEFAULT_LOCATORS = {
-    "select_patient_btn": {"title": "Select Patient", "control_type": "SplitButton"},
-    "add_pt_btn": {"title_re": ".*Add Pt.*", "control_type": "Button"},
+    # Select Patient panel (auto_id from diagnostics)
+    "select_patient_form": {"auto_id": "FormPatientSelect"},
+    "add_pt_btn": {"auto_id": "butAddPt"},
+    "add_many_btn": {"auto_id": "butAddMany"},
+    "ok_btn": {"auto_id": "butOK"},
+    "search_btn": {"auto_id": "butSearch"},
+    "get_all_btn": {"auto_id": "butGetAll"},
+    # Edit Patient form
+    "edit_patient_form": {"auto_id": "FormPatientEdit"},
     "save_btn": {"title": "Save", "control_type": "Button"},
     "acknowledge_btn": {"title": "Acknowledge", "control_type": "Button"},
-    "ok_btn": {"title": "OK", "control_type": "Button"},
-    # Patient form fields
+    # Patient form fields (will be refined after Edit Patient diagnostics)
     "last_name_field": {"title": "Last Name", "control_type": "Edit"},
     "first_name_field": {"title": "First Name", "control_type": "Edit"},
     "middle_initial_field": {"title": "Middle Initial", "control_type": "Edit"},

@@ -8,6 +8,9 @@ FIELD_ORDER = [
 
 GENDER_MAP = {"male": 0, "female": 1, "unknown": 2}
 
+# Fields containing Protected Health Information — must be masked in all logs
+PHI_FIELDS = {"ssn", "phone", "address", "dob"}
+
 
 @dataclass
 class Patient:
@@ -57,6 +60,14 @@ class Patient:
 
         has_required = bool(self.last_name.strip() and self.first_name.strip())
         return has_required, errors
+
+    def mask_for_log(self, field_name, value):
+        """Mask PHI fields for safe logging. Never log raw SSN/phone/address/DOB."""
+        if not value or field_name not in PHI_FIELDS:
+            return value
+        if field_name == "ssn":
+            return "***"
+        return "[REDACTED]"
 
     def to_dict(self):
         return asdict(self)

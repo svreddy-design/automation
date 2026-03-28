@@ -1,18 +1,18 @@
-"""Practice Management Bot PRO — OpenDental Patient Entry Automation"""
+"""Practice Management Bot PRO — OpenDental Patient Entry Automation
+
+Pure pywinauto GUI automation. Windows-only.
+No database dependency — enters patients through the OpenDental UI."""
 
 import customtkinter as ctk
 import time
 import threading
 import os
-import platform
-import subprocess
 import json
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 from core.patient import Patient
 from core.opendental import load_timing
 from core.csv_import import read_patients_csv, load_batch_log, write_batch_log_entry
-from core.database import insert_patient
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("green")
@@ -130,24 +130,14 @@ class PracticeManagementBot(ctk.CTk):
         self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.btn_frame.pack(pady=5, padx=20, fill="x")
 
-        self.db_btn = ctk.CTkButton(
+        self.gui_btn = ctk.CTkButton(
             self.btn_frame,
-            text="Save to OpenDental\n(Database — Instant)",
+            text="Enter Patient in OpenDental\n(GUI Automation)",
             font=ctk.CTkFont(size=14, weight="bold"), height=55,
-            command=self.start_db_thread,
-            fg_color="#e94560", hover_color="#c73651"
+            command=self.start_gui_thread,
+            fg_color="#1a8a4a", hover_color="#14693a"
         )
-        self.db_btn.pack(fill="x", pady=3)
-
-        if platform.system() == "Windows":
-            self.gui_btn = ctk.CTkButton(
-                self.btn_frame,
-                text="Open App & Fill Form\n(GUI Automation — Visual)",
-                font=ctk.CTkFont(size=14, weight="bold"), height=55,
-                command=self.start_gui_thread,
-                fg_color="#005b96", hover_color="#03396c"
-            )
-            self.gui_btn.pack(fill="x", pady=3)
+        self.gui_btn.pack(fill="x", pady=3)
 
         self.csv_btn = ctk.CTkButton(
             self.btn_frame,
@@ -176,10 +166,7 @@ class PracticeManagementBot(ctk.CTk):
 
     # ── Button State ──
     def _all_buttons(self):
-        btns = [self.db_btn, self.csv_btn]
-        if platform.system() == "Windows" and hasattr(self, 'gui_btn'):
-            btns.append(self.gui_btn)
-        return btns
+        return [self.gui_btn, self.csv_btn]
 
     def disable_buttons(self):
         for btn in self._all_buttons():
@@ -203,11 +190,6 @@ class PracticeManagementBot(ctk.CTk):
     def load_config(self):
         defaults = {
             "app_path": r"C:\Program Files (x86)\Open Dental\OpenDental.exe",
-            "db_host": "localhost",
-            "db_port": 3306,
-            "db_user": "root",
-            "db_password": "",
-            "db_name": "opendental",
         }
         if os.path.exists(self.config_file):
             try:
@@ -218,73 +200,23 @@ class PracticeManagementBot(ctk.CTk):
                 pass
         return defaults
 
-    def get_db_config(self):
-        return {
-            "host": self.config.get("db_host", "localhost"),
-            "port": self.config.get("db_port", 3306),
-            "user": self.config.get("db_user", "root"),
-            "password": self.config.get("db_password", ""),
-            "database": self.config.get("db_name", "opendental"),
-        }
+    # ══════════════════════════════════════════════
+    #  Human-in-the-Loop Confirmation
+    # ══════════════════════════════════════════════
+    def confirm_patient_entry(self, patient):
+        """Show confirmation dialog before automation. Returns True if user approves."""
+        msg = (
+            f"Ready to enter patient into OpenDental:\n\n"
+            f"  Name: {patient.first_name} {patient.last_name}\n"
+            f"  Gender: {patient.gender or 'N/A'}\n"
+            f"  DOB: {patient.mask_for_log('dob', patient.dob) or 'N/A'}\n"
+            f"  SSN: {patient.mask_for_log('ssn', patient.ssn) or 'N/A'}\n\n"
+            f"Proceed with GUI automation?"
+        )
+        return messagebox.askyesno("Confirm Patient Entry", msg)
 
     # ══════════════════════════════════════════════
-    #  METHOD 1: Direct Database (Instant, Reliable)
-    # ══════════════════════════════════════════════
-    def start_db_thread(self):
-        self.disable_buttons()
-        threading.Thread(target=self.run_db_insert, daemon=True).start()
-
-    def run_db_insert(self):
-        try:
-            self.log("── Save to OpenDental Database ──", "#e94560")
-
-            # Step 1: Validate
-            self.log("[1/4] Validating patient data...")
-            patient = self.get_patient_from_gui()
-            is_valid, errors = patient.validate()
-            if not is_valid:
-                self.log(f"FAILED: {'; '.join(errors)}", "#e94560")
-                return
-            self.log(f"[1/4] Valid: {patient.first_name} {patient.last_name}")
-
-            # Step 2: Connect
-            self.log("[2/4] Connecting to database...")
-            db_config = self.get_db_config()
-
-            # Step 3: Insert
-            self.log("[3/4] Inserting patient record...")
-            result = insert_patient(patient, self.update_status, db_config)
-
-            if not result:
-                self.log("FAILED: Could not insert patient. Check database connection.", "#e94560")
-                return
-
-            # Step 4: Done
-            self.log(f"[4/4] SUCCESS! Patient #{result} saved.", "#4ecca3")
-            self.log(f"  Name: {patient.first_name} {patient.last_name}")
-            if patient.dob:
-                self.log(f"  DOB: {patient.dob}")
-            if patient.phone:
-                self.log(f"  Phone: {patient.phone}")
-            if patient.address:
-                self.log(f"  Address: {patient.address}, {patient.city}, {patient.state} {patient.zip}")
-            self.log("")
-            self.log("Open OpenDental > Select Patient > Search last name to verify.", "#888")
-
-            # Auto-launch OpenDental on Windows
-            if platform.system() == "Windows":
-                app_path = self.config.get("app_path", "")
-                if os.path.exists(app_path):
-                    self.log("Launching OpenDental...", "#888")
-                    subprocess.Popen([app_path])
-
-        except Exception as e:
-            self.log(f"ERROR: {e}", "#e94560")
-        finally:
-            self.enable_buttons()
-
-    # ══════════════════════════════════════════════
-    #  METHOD 2: GUI Automation (Visual, Windows)
+    #  GUI Automation (Primary Method)
     # ══════════════════════════════════════════════
     def start_gui_thread(self):
         self.disable_buttons()
@@ -292,18 +224,24 @@ class PracticeManagementBot(ctk.CTk):
 
     def run_gui_auto(self):
         try:
-            self.log("── Open App & Fill Form ──", "#005b96")
+            self.log("── Enter Patient in OpenDental ──", "#1a8a4a")
 
-            # Validate
-            self.log("[1/10] Validating patient data...")
+            # Step 1: Validate
+            self.log("[1] Validating patient data...")
             patient = self.get_patient_from_gui()
             is_valid, errors = patient.validate()
             if not is_valid:
                 self.log(f"FAILED: {'; '.join(errors)}", "#e94560")
                 return
-            self.log(f"[1/10] Valid: {patient.first_name} {patient.last_name}")
+            self.log(f"[1] Valid: {patient.first_name} {patient.last_name}")
 
-            # Import here so Mac doesn't crash
+            # Step 2: Human confirmation
+            approved = self.confirm_patient_entry(patient)
+            if not approved:
+                self.log("Cancelled by user.", "#888")
+                return
+
+            # Step 3: Run automation
             from core.opendental_gui import automate_patient_entry
 
             config = dict(self.timing)
@@ -316,7 +254,7 @@ class PracticeManagementBot(ctk.CTk):
                 self.log("Patient saved in OpenDental!", "#4ecca3")
             else:
                 self.log("")
-                self.log("Automation failed. Try 'Save to OpenDental' (Database) instead.", "#e94560")
+                self.log("Automation failed. Check status log for details.", "#e94560")
 
         except Exception as e:
             self.log(f"ERROR: {e}", "#e94560")
@@ -324,7 +262,7 @@ class PracticeManagementBot(ctk.CTk):
             self.enable_buttons()
 
     # ══════════════════════════════════════════════
-    #  CSV Batch Import
+    #  CSV Batch Import (GUI Automation)
     # ══════════════════════════════════════════════
     def import_csv(self):
         file_path = filedialog.askopenfilename(
@@ -339,19 +277,39 @@ class PracticeManagementBot(ctk.CTk):
 
     def run_csv_batch(self, csv_path):
         try:
-            self.log("── CSV Batch Import ──", "#f0c040")
+            self.log("── CSV Batch Import (GUI Automation) ──", "#f0c040")
+
+            from core.opendental_gui import automate_patient_entry
 
             rows = read_patients_csv(csv_path)
             log_path = os.path.join(os.path.dirname(csv_path), "batch_log.csv")
             completed = load_batch_log(log_path)
             total = len(rows)
-            db_config = self.get_db_config()
+
+            config = dict(self.timing)
+            config["app_path"] = self.config.get("app_path", "")
+            batch_delay = self.timing.get("batch_patient_delay_s", 3)
 
             self.log(f"Loaded {total} patients from CSV")
+
+            # Human confirmation for batch
+            proceed = messagebox.askyesno(
+                "Confirm Batch Import",
+                f"Ready to enter {total} patients into OpenDental via GUI automation.\n\n"
+                f"Already completed: {len(completed)}\n"
+                f"Remaining: {total - len(completed)}\n\n"
+                f"This will take approximately "
+                f"{(total - len(completed)) * 30} seconds.\n\n"
+                f"Proceed?"
+            )
+            if not proceed:
+                self.log("Batch cancelled by user.", "#888")
+                return
+
             success_count = 0
             skip_count = 0
 
-            for row_num, patient, is_valid, errors in rows:
+            for idx, (row_num, patient, is_valid, errors) in enumerate(rows):
                 if row_num in completed:
                     self.log(f"  Row {row_num}: skipped (already done)")
                     skip_count += 1
@@ -366,10 +324,10 @@ class PracticeManagementBot(ctk.CTk):
                     skip_count += 1
                     continue
 
-                self.log(f"  Row {row_num}/{total}: {patient.first_name} {patient.last_name}...")
+                self.log(f"  Patient {row_num}/{total}: {patient.first_name} {patient.last_name}...")
 
-                result = insert_patient(patient, self.update_status, db_config)
-                if result:
+                success = automate_patient_entry(patient, self.update_status, config)
+                if success:
                     write_batch_log_entry(
                         log_path, row_num, patient.last_name,
                         patient.first_name, "success", ""
@@ -378,12 +336,18 @@ class PracticeManagementBot(ctk.CTk):
                 else:
                     write_batch_log_entry(
                         log_path, row_num, patient.last_name,
-                        patient.first_name, "error", "insert failed"
+                        patient.first_name, "error", "GUI automation failed"
                     )
 
+                # Delay between patients (skip after last)
+                if idx < len(rows) - 1:
+                    time.sleep(batch_delay)
+
             self.log("")
-            self.log(f"Batch complete: {success_count} saved, {skip_count} skipped, {total} total", "#4ecca3")
-            self.log("Open OpenDental to verify all patients.", "#888")
+            self.log(
+                f"Batch complete: {success_count} saved, {skip_count} skipped, {total} total",
+                "#4ecca3"
+            )
 
         except Exception as e:
             self.log(f"CSV Error: {e}", "#e94560")

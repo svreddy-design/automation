@@ -1,15 +1,17 @@
-import pyautogui
-import time
+"""OpenDental configuration utilities.
+Timing, tab order, element locators, and path detection."""
+
 import json
 import os
 import platform
-import subprocess
-from core.patient import Patient, FIELD_ORDER, GENDER_MAP
+from core.patient import FIELD_ORDER
 
 DEFAULT_TIMING = {
     "typing_interval_ms": 50,
-    "field_delay_ms": 500,
-    "app_load_delay_s": 7,
+    "field_delay_ms": 200,
+    "action_delay_ms": 500,
+    "typing_pause_ms": 30,
+    "app_load_delay_s": 12,
     "login_delay_s": 6,
     "batch_patient_delay_s": 3,
 }
@@ -20,6 +22,26 @@ OPENDENTAL_PATHS = [
     r"C:\Program Files (x86)\Open Dental\OpenDental.exe",
     r"C:\OpenDental\OpenDental.exe",
 ]
+
+# Default UI element locators — override in config.json for different OD versions
+DEFAULT_LOCATORS = {
+    "select_patient_btn": {"title": "Select Patient", "control_type": "SplitButton"},
+    "add_pt_btn": {"title_re": ".*Add Pt.*", "control_type": "Button"},
+    "save_btn": {"title": "Save", "control_type": "Button"},
+    "acknowledge_btn": {"title": "Acknowledge", "control_type": "Button"},
+    "ok_btn": {"title": "OK", "control_type": "Button"},
+    # Patient form fields
+    "last_name_field": {"title": "Last Name", "control_type": "Edit"},
+    "first_name_field": {"title": "First Name", "control_type": "Edit"},
+    "middle_initial_field": {"title": "Middle Initial", "control_type": "Edit"},
+    "birthdate_field": {"title": "Birthdate", "control_type": "Edit"},
+    "ssn_field": {"title": "SS#", "control_type": "Edit"},
+    "address_field": {"title": "Address", "control_type": "Edit"},
+    "city_field": {"title": "City", "control_type": "Edit"},
+    "state_field": {"title": "ST", "control_type": "Edit"},
+    "zip_field": {"title": "Zip", "control_type": "Edit"},
+    "phone_field": {"title": "Home Phone", "control_type": "Edit"},
+}
 
 
 def find_opendental():
@@ -61,154 +83,17 @@ def load_tab_order(config_path="config.json"):
     return list(FIELD_ORDER)
 
 
-def launch_app(app_path, status_callback, timing):
-    """Launch target application cross-platform. Returns True if launched."""
-    app_name = os.path.basename(app_path)
-    status_callback(f"Launching {app_name}...", "yellow")
-
-    if platform.system() == "Windows":
+def load_locators(config_path="config.json"):
+    """Load UI element locators from config. Allows per-OD-version overrides.
+    Practices with different OD versions just update config.json, not code."""
+    locators = dict(DEFAULT_LOCATORS)
+    if os.path.exists(config_path):
         try:
-            subprocess.Popen([app_path])
-        except FileNotFoundError:
-            status_callback(f"File not found: {app_path}", "red")
-            return False
-    elif platform.system() == "Darwin":
-        # On Mac, open .app bundles or use 'open' command
-        if app_path.endswith(".app") or os.path.isdir(app_path):
-            os.system(f"open '{app_path}'")
-        else:
-            os.system(f"open -a '{app_name}'")
-        time.sleep(1)
-        # Bring to front
-        clean_name = app_name.replace(".app", "")
-        os.system(f"osascript -e 'tell application \"{clean_name}\" to activate'")
-    else:
-        try:
-            subprocess.Popen([app_path])
-        except FileNotFoundError:
-            status_callback(f"File not found: {app_path}", "red")
-            return False
-
-    status_callback("Waiting for application to load...", "yellow")
-    time.sleep(timing["app_load_delay_s"])
-    return True
-
-
-def navigate_to_add_patient(status_callback, timing, skip_login=False):
-    """Navigate from OpenDental main screen to the Add Patient form."""
-    if not skip_login:
-        status_callback("Bypassing Open Dental Login...", "yellow")
-        pyautogui.press('enter')
-        time.sleep(timing["login_delay_s"])
-
-    # Dismiss any alert popups first
-    status_callback("Dismissing popups...", "yellow")
-    pyautogui.press('enter')
-    time.sleep(1)
-
-    # Click on Select Patient button in toolbar
-    # OpenDental shortcut: click "Select Patient" or use keyboard
-    status_callback("Opening 'Select Patient'...", "yellow")
-    pyautogui.hotkey('ctrl', 'p')
-    time.sleep(2)
-
-    # In Select Patient window, click "Add New Patient" button
-    status_callback("Clicking 'Add New Patient'...", "yellow")
-    # Tab to the Add button and press Enter, or use Alt+A within the Select Patient dialog
-    pyautogui.hotkey('alt', 'a')
-    time.sleep(2)
-
-
-def enter_patient_fields(patient, status_callback, timing, config_path="config.json"):
-    """Type all patient fields into the Add Patient form via Tab navigation.
-    Assumes cursor is on Last Name field. Returns list of field errors."""
-    interval = timing["typing_interval_ms"] / 1000.0
-    delay = timing["field_delay_ms"] / 1000.0
-    field_errors = []
-    tab_order = load_tab_order(config_path)
-
-    for field_name in tab_order:
-        value = getattr(patient, field_name, "")
-
-        # Mask SSN in status display
-        display_value = "***" if field_name == "ssn" and value else value
-
-        if value:
-            status_callback(f"Entering {field_name}: {display_value}", "yellow")
-            try:
-                if field_name == "gender":
-                    gender_index = GENDER_MAP.get(value.lower(), -1)
-                    if gender_index >= 0:
-                        for _ in range(gender_index):
-                            pyautogui.press('down')
-                            time.sleep(0.1)
-                elif field_name == "dob":
-                    digits = value.replace("/", "")
-                    pyautogui.write(digits, interval=interval)
-                else:
-                    pyautogui.write(value, interval=interval)
-            except Exception as e:
-                field_errors.append(f"{field_name}: {e}")
-
-        # Tab to next field
-        pyautogui.press('tab')
-        time.sleep(delay)
-
-    return field_errors
-
-
-def enter_patient_fields_plain(patient, status_callback, timing):
-    """Type patient data as plain text into any text editor (for demo/test mode).
-    Works on Mac and Windows — opens a text area and types all fields."""
-    interval = timing["typing_interval_ms"] / 1000.0
-    tab_order = load_tab_order()
-
-    status_callback("Typing patient data...", "yellow")
-    header = "=== Patient Record ==="
-    pyautogui.write(header, interval=interval)
-    pyautogui.press('enter')
-    time.sleep(0.3)
-
-    for field_name in tab_order:
-        value = getattr(patient, field_name, "")
-        display_value = "***" if field_name == "ssn" and value else value
-        if value:
-            status_callback(f"Typing {field_name}: {display_value}", "yellow")
-            line = f"{field_name}: {value}"
-            pyautogui.write(line, interval=interval)
-            pyautogui.press('enter')
-            time.sleep(0.2)
-
-    pyautogui.write("=== End Record ===", interval=interval)
-
-
-def save_patient(status_callback):
-    """Press Enter to save the patient record."""
-    status_callback("Saving Patient Profile...", "yellow")
-    pyautogui.press('enter')
-    time.sleep(2)
-
-
-def dry_run(patient, status_callback):
-    """Simulate the automation without touching any app. Logs what it would do."""
-    tab_order = load_tab_order()
-
-    status_callback("DRY RUN: Would bypass login (Enter)...", "cyan")
-    time.sleep(0.5)
-    status_callback("DRY RUN: Would open Select Patient (Ctrl+S)...", "cyan")
-    time.sleep(0.5)
-    status_callback("DRY RUN: Would click Add Pt (Alt+A)...", "cyan")
-    time.sleep(0.5)
-
-    for field_name in tab_order:
-        value = getattr(patient, field_name, "")
-        display_value = "***" if field_name == "ssn" and value else value
-        if value:
-            status_callback(f"DRY RUN: Would type {field_name} = {display_value}", "cyan")
-        else:
-            status_callback(f"DRY RUN: Would skip {field_name} (empty)", "gray")
-        time.sleep(0.3)
-
-    status_callback("DRY RUN: Would press Enter to save", "cyan")
-    time.sleep(0.5)
-    status_callback("DRY RUN complete! All steps verified.", "limegreen")
+            with open(config_path, 'r') as f:
+                data = json.load(f)
+                custom = data.get("locators", None)
+                if custom and isinstance(custom, dict):
+                    locators.update(custom)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return locators

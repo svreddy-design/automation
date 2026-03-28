@@ -404,48 +404,94 @@ def automate_patient_entry(patient, status_callback, config=None):
             ("ssn",          patient.ssn,             "textSSN"),
         ]
 
+        def _type_into_field(field, value, field_name):
+            """Click a field, clear it, type value using pywinauto set_edit_text.
+            Falls back to pyautogui if set_edit_text fails.
+            Returns True if typed successfully."""
+            display = _mask(field_name, value)
+            try:
+                fr = field.rectangle()
+                cx = (fr.left + fr.right) // 2
+                cy = (fr.top + fr.bottom) // 2
+                pyautogui.click(cx, cy)
+                time.sleep(0.3)
+
+                # Use pywinauto set_edit_text (more reliable than pyautogui.write)
+                try:
+                    field.set_edit_text(value)
+                except Exception:
+                    # Fallback: select all + type slowly
+                    pyautogui.hotkey('ctrl', 'a')
+                    time.sleep(0.1)
+                    pyautogui.write(value, interval=typing_interval)
+
+                # Verify: read back what was typed
+                time.sleep(0.2)
+                try:
+                    actual = field.window_text().strip()
+                    if actual == value.strip():
+                        _log(status_callback, f"  {field_name} = {display} [verified]", "yellow")
+                    else:
+                        # Retry once with set_edit_text
+                        field.set_edit_text("")
+                        time.sleep(0.1)
+                        field.set_edit_text(value)
+                        _log(status_callback, f"  {field_name} = {display} [retry]", "yellow")
+                except Exception:
+                    _log(status_callback, f"  {field_name} = {display} [set]", "yellow")
+                return True
+            except Exception as e:
+                _log(status_callback, f"  {field_name}: error — {e}", "orange")
+                return False
+
         for field_name, value, auto_id in field_map:
             if not value:
                 continue
-            display = _mask(field_name, value)
             try:
                 field = main_win.child_window(auto_id=auto_id, control_type="Edit")
                 if field.exists(timeout=1):
-                    fr = field.rectangle()
-                    cx = (fr.left + fr.right) // 2
-                    cy = (fr.top + fr.bottom) // 2
-                    pyautogui.click(cx, cy)
-                    time.sleep(0.2)
-                    pyautogui.hotkey('ctrl', 'a')
-                    pyautogui.write(value, interval=typing_interval)
-                    _log(status_callback, f"  {field_name} = {display} [OK]", "yellow")
+                    _type_into_field(field, value, field_name)
                 else:
-                    _log(status_callback, f"  {field_name}: field not found ({auto_id})", "orange")
+                    _log(status_callback, f"  {field_name}: not found ({auto_id})", "orange")
             except Exception as e:
                 _log(status_callback, f"  {field_name}: error — {e}", "orange")
             time.sleep(field_delay)
 
-        # Birthdate (special: auto_id='textDate' but there are multiple textDate fields)
-        # Use the one inside FormPatientEdit area, approx rect (L408, T383)
+        # Birthdate (auto_id='textDate' but multiple exist — find by label)
         if patient.dob:
             display = _mask("dob", patient.dob)
+            filled_dob = False
             try:
-                # Find all textDate fields, pick the one in the left column (x < 600)
-                dates = main_win.children(auto_id="textDate", control_type="Edit")
-                for d in dates:
-                    dr = d.rectangle()
-                    if dr.left < 600:  # left column = patient info area
-                        cx = (dr.left + dr.right) // 2
-                        cy = (dr.top + dr.bottom) // 2
-                        pyautogui.click(cx, cy)
-                        time.sleep(0.2)
-                        pyautogui.hotkey('ctrl', 'a')
-                        digits = patient.dob.replace("/", "")
-                        pyautogui.write(digits, interval=typing_interval)
-                        _log(status_callback, f"  dob = {display} [OK]", "yellow")
-                        break
+                # Find the Birthdate label, then find the nearby Edit field
+                labels = main_win.descendants(control_type="Text")
+                for lbl in labels:
+                    try:
+                        if lbl.element_info.automation_id == "labelBirthdate":
+                            lr = lbl.rectangle()
+                            # The edit field is to the right of the label
+                            # Find Edit fields near this label's Y position
+                            for ed in main_win.descendants(control_type="Edit"):
+                                er = ed.rectangle()
+                                # Same row (within 20px) and to the right
+                                if abs(er.top - lr.top) < 20 and er.left > lr.left:
+                                    pyautogui.click((er.left + er.right) // 2,
+                                                    (er.top + er.bottom) // 2)
+                                    time.sleep(0.3)
+                                    try:
+                                        ed.set_edit_text(patient.dob)
+                                    except Exception:
+                                        pyautogui.hotkey('ctrl', 'a')
+                                        pyautogui.write(patient.dob, interval=typing_interval)
+                                    _log(status_callback, f"  dob = {display} [OK]", "yellow")
+                                    filled_dob = True
+                                    break
+                            break
+                    except Exception:
+                        continue
             except Exception as e:
                 _log(status_callback, f"  dob: error — {e}", "orange")
+            if not filled_dob:
+                _log(status_callback, "  dob: could not find Birthdate field", "orange")
             time.sleep(field_delay)
 
         # Gender (listbox — need to click the right item)
@@ -471,22 +517,50 @@ def automate_patient_entry(patient, status_callback, config=None):
         # ═══ STEP 7: Save ═══
         _log(status_callback, "[7/8] Saving...", "yellow")
 
-        # Find Save button by auto_id and click with pyautogui
+        # Find Save button — search inside FormPatientEdit first, then scan all
         saved = False
+        main_win = app.top_window()
+
+        # Strategy 1: butSave inside FormPatientEdit
         try:
-            save_btn = main_win.child_window(auto_id="butSave")
-            if save_btn.exists(timeout=2):
-                sr = save_btn.rectangle()
-                cx = (sr.left + sr.right) // 2
-                cy = (sr.top + sr.bottom) // 2
-                _log(status_callback, f"  Found Save at ({cx}, {cy})", "cyan")
-                pyautogui.click(cx, cy)
-                saved = True
+            edit_form = main_win.child_window(auto_id="FormPatientEdit")
+            if edit_form.exists(timeout=1):
+                save_btn = edit_form.child_window(auto_id="butSave")
+                if save_btn.exists(timeout=1):
+                    sr = save_btn.rectangle()
+                    pyautogui.click((sr.left + sr.right) // 2, (sr.top + sr.bottom) // 2)
+                    saved = True
+                    _log(status_callback, "  Clicked Save (FormPatientEdit)!", "cyan")
         except Exception:
             pass
 
+        # Strategy 2: Scan all descendants for butSave
         if not saved:
-            _log(status_callback, "  Pressing Enter to save...", "cyan")
+            try:
+                for desc in main_win.descendants():
+                    if desc.element_info.automation_id == "butSave":
+                        sr = desc.rectangle()
+                        pyautogui.click((sr.left + sr.right) // 2, (sr.top + sr.bottom) // 2)
+                        saved = True
+                        _log(status_callback, "  Clicked Save (scan)!", "cyan")
+                        break
+            except Exception:
+                pass
+
+        # Strategy 3: Look for Button with text "Save"
+        if not saved:
+            try:
+                save_btn = main_win.child_window(title="Save", control_type="Button")
+                if save_btn.exists(timeout=1):
+                    sr = save_btn.rectangle()
+                    pyautogui.click((sr.left + sr.right) // 2, (sr.top + sr.bottom) // 2)
+                    saved = True
+                    _log(status_callback, "  Clicked Save (Button)!", "cyan")
+            except Exception:
+                pass
+
+        if not saved:
+            _log(status_callback, "  Save not found — pressing Enter...", "orange")
             pyautogui.press('enter')
 
         time.sleep(2)

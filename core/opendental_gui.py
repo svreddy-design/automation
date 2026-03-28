@@ -47,40 +47,38 @@ def _mask(field_name, value):
 
 def identify_screen(app):
     """Identify current OpenDental screen. Returns (screen_type, window, title).
-    Checks ALL windows (not just top_window) because dialogs like Select Patient
-    may be child/owned windows that top_window() doesn't return.
+    Uses system-wide window search because OpenDental's dialogs (Select Patient,
+    Edit Patient) are child windows that app.top_window() and app.windows() miss.
     Screen types: choose_database, alerts, select_patient, edit_patient,
     popup, main_window, unknown, error."""
+    from pywinauto import Desktop
+
     try:
-        # First check ALL windows for important dialogs
-        # (Select Patient, Edit Patient, etc. are child windows that
-        #  top_window() often misses, returning the main window instead)
+        # Search ALL visible windows on the desktop for OpenDental dialogs
+        # This catches child/owned windows that app.windows() misses
         try:
-            for win in app.windows():
+            desktop = Desktop(backend="uia")
+            for dwin in desktop.windows():
                 try:
-                    t = win.window_text()
+                    t = dwin.window_text()
                     if "Select Patient" in t:
-                        return "select_patient", win, t
+                        return "select_patient", dwin, t
                     if "Edit Patient" in t:
-                        return "edit_patient", win, t
+                        return "edit_patient", dwin, t
                     if "Choose Database" in t:
-                        return "choose_database", win, t
-                    if "Alert" in t:
-                        return "alerts", win, t
+                        return "choose_database", dwin, t
                 except Exception:
                     continue
         except Exception:
             pass
 
-        # Fall back to top_window for main window / popup detection
+        # Fall back to app.top_window for main window / popup detection
         win = app.top_window()
         title = win.window_text()
         rect = win.rectangle()
         width = rect.right - rect.left
         height = rect.bottom - rect.top
 
-        if "Choose Database" in title:
-            return "choose_database", win, title
         if "Alert" in title:
             return "alerts", win, title
         if "Select Patient" in title:

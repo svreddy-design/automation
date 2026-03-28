@@ -171,12 +171,12 @@ def automate_patient_entry(patient, status_callback, config=None):
     import pyautogui
 
     pyautogui.FAILSAFE = True
-    pyautogui.PAUSE = 0.1
+    pyautogui.PAUSE = 0.05  # faster between pyautogui actions
 
     timing = config or {}
     app_path = timing.get("app_path", r"C:\Program Files (x86)\Open Dental\OpenDental.exe")
-    field_delay = timing.get("field_delay_ms", 300) / 1000.0
-    typing_interval = timing.get("typing_interval_ms", 50) / 1000.0
+    field_delay = timing.get("field_delay_ms", 150) / 1000.0  # 150ms between fields
+    typing_interval = timing.get("typing_interval_ms", 30) / 1000.0  # 30ms between keys
 
     try:
         # ═══ STEP 1: Connect or Launch ═══
@@ -254,7 +254,7 @@ def automate_patient_entry(patient, status_callback, config=None):
                 click_y = rect.top + 70
                 _log(status_callback, f"  Click {click_attempt+1}: toolbar at ({click_x}, {click_y})", "cyan")
                 pyautogui.click(click_x, click_y)
-                time.sleep(3)
+                time.sleep(2)
 
                 app = _reconnect(app)
                 screen, win, title = identify_screen(app)
@@ -290,7 +290,7 @@ def automate_patient_entry(patient, status_callback, config=None):
                     ln_rect = ln_field.rectangle()
                     pyautogui.click((ln_rect.left + ln_rect.right) // 2,
                                     (ln_rect.top + ln_rect.bottom) // 2)
-                    time.sleep(0.3)
+                    time.sleep(0.15)
                     pyautogui.hotkey('ctrl', 'a')
                     pyautogui.write(patient.last_name, interval=typing_interval)
                     _log(status_callback, f"  Last Name: {patient.last_name}", "cyan")
@@ -304,7 +304,7 @@ def automate_patient_entry(patient, status_callback, config=None):
                     fn_rect = fn_field.rectangle()
                     pyautogui.click((fn_rect.left + fn_rect.right) // 2,
                                     (fn_rect.top + fn_rect.bottom) // 2)
-                    time.sleep(0.3)
+                    time.sleep(0.15)
                     pyautogui.hotkey('ctrl', 'a')
                     pyautogui.write(patient.first_name, interval=typing_interval)
                     _log(status_callback, f"  First Name: {patient.first_name}", "cyan")
@@ -385,7 +385,7 @@ def automate_patient_entry(patient, status_callback, config=None):
 
         # ═══ STEP 6: Fill Form (direct auto_id field access) ═══
         _log(status_callback, "[6/8] Filling patient form...", "yellow")
-        time.sleep(1)
+        time.sleep(0.5)
 
         main_win = app.top_window()
 
@@ -414,7 +414,7 @@ def automate_patient_entry(patient, status_callback, config=None):
                 cx = (fr.left + fr.right) // 2
                 cy = (fr.top + fr.bottom) // 2
                 pyautogui.click(cx, cy)
-                time.sleep(0.3)
+                time.sleep(0.15)
 
                 # Use pywinauto set_edit_text (more reliable than pyautogui.write)
                 try:
@@ -426,7 +426,7 @@ def automate_patient_entry(patient, status_callback, config=None):
                     pyautogui.write(value, interval=typing_interval)
 
                 # Verify: read back what was typed
-                time.sleep(0.2)
+                time.sleep(0.1)
                 try:
                     actual = field.window_text().strip()
                     if actual == value.strip():
@@ -476,7 +476,7 @@ def automate_patient_entry(patient, status_callback, config=None):
                                 if abs(er.top - lr.top) < 20 and er.left > lr.left:
                                     pyautogui.click((er.left + er.right) // 2,
                                                     (er.top + er.bottom) // 2)
-                                    time.sleep(0.3)
+                                    time.sleep(0.15)
                                     try:
                                         ed.set_edit_text(patient.dob)
                                     except Exception:
@@ -517,37 +517,22 @@ def automate_patient_entry(patient, status_callback, config=None):
         # ═══ STEP 7: Save ═══
         _log(status_callback, "[7/8] Saving...", "yellow")
 
-        # Find Save button — search inside FormPatientEdit first, then scan all
+        # Find and click Save button
         saved = False
         main_win = app.top_window()
 
-        # Strategy 1: butSave inside FormPatientEdit
+        # Direct search for butSave (Button type from diagnostics)
         try:
-            edit_form = main_win.child_window(auto_id="FormPatientEdit")
-            if edit_form.exists(timeout=1):
-                save_btn = edit_form.child_window(auto_id="butSave")
-                if save_btn.exists(timeout=1):
-                    sr = save_btn.rectangle()
-                    pyautogui.click((sr.left + sr.right) // 2, (sr.top + sr.bottom) // 2)
-                    saved = True
-                    _log(status_callback, "  Clicked Save (FormPatientEdit)!", "cyan")
+            save_btn = main_win.child_window(auto_id="butSave", control_type="Button")
+            if save_btn.exists(timeout=2):
+                sr = save_btn.rectangle()
+                pyautogui.click((sr.left + sr.right) // 2, (sr.top + sr.bottom) // 2)
+                saved = True
+                _log(status_callback, "  Clicked Save!", "cyan")
         except Exception:
             pass
 
-        # Strategy 2: Scan all descendants for butSave
-        if not saved:
-            try:
-                for desc in main_win.descendants():
-                    if desc.element_info.automation_id == "butSave":
-                        sr = desc.rectangle()
-                        pyautogui.click((sr.left + sr.right) // 2, (sr.top + sr.bottom) // 2)
-                        saved = True
-                        _log(status_callback, "  Clicked Save (scan)!", "cyan")
-                        break
-            except Exception:
-                pass
-
-        # Strategy 3: Look for Button with text "Save"
+        # Fallback: find any button with "Save" text
         if not saved:
             try:
                 save_btn = main_win.child_window(title="Save", control_type="Button")
@@ -555,7 +540,7 @@ def automate_patient_entry(patient, status_callback, config=None):
                     sr = save_btn.rectangle()
                     pyautogui.click((sr.left + sr.right) // 2, (sr.top + sr.bottom) // 2)
                     saved = True
-                    _log(status_callback, "  Clicked Save (Button)!", "cyan")
+                    _log(status_callback, "  Clicked Save (by title)!", "cyan")
             except Exception:
                 pass
 

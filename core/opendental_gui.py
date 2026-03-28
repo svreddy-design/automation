@@ -59,7 +59,7 @@ def identify_screen(app):
         # Child forms inside main window (by auto_id)
         try:
             sp = win.child_window(auto_id="FormPatientSelect")
-            if sp.exists(timeout=1):
+            if sp.exists(timeout=2):
                 return "select_patient", sp, title
         except Exception:
             pass
@@ -245,26 +245,38 @@ def automate_patient_entry(patient, status_callback, config=None):
         else:
             _log(status_callback, "[3/8] Opening Select Patient...", "yellow")
 
-            # pyautogui clicks the toolbar (invisible to pywinauto)
             main_win = app.top_window()
             rect = main_win.rectangle()
 
-            for click_attempt in range(3):
-                click_x = rect.left + 90
-                click_y = rect.top + 70
-                _log(status_callback, f"  Click {click_attempt+1}: toolbar at ({click_x}, {click_y})", "cyan")
-                pyautogui.click(click_x, click_y)
-                time.sleep(2)
+            # Click toolbar ONCE, then check
+            click_x = rect.left + 90
+            click_y = rect.top + 70
+            _log(status_callback, f"  Clicking toolbar at ({click_x}, {click_y})", "cyan")
+            pyautogui.click(click_x, click_y)
+            time.sleep(2)
 
+            app = _reconnect(app)
+            screen, win, title = identify_screen(app)
+
+            # If we got a popup (wrong button), close and retry
+            if screen in ("popup", "unknown"):
+                _log(status_callback, f"  Wrong dialog — closing...", "cyan")
+                pyautogui.press('escape')
+                time.sleep(1)
+                app = _reconnect(app)
+                # Try again with slightly different X
+                pyautogui.click(click_x + 10, click_y)
+                time.sleep(2)
                 app = _reconnect(app)
                 screen, win, title = identify_screen(app)
-                if screen == "select_patient":
-                    break
 
-                if screen in ("popup", "unknown"):
-                    pyautogui.press('escape')
-                    time.sleep(1)
-                    app = _reconnect(app)
+            # If still not open, maybe it toggled off — click one more time
+            if screen != "select_patient":
+                _log(status_callback, f"  Screen is '{screen}', clicking toolbar again...", "cyan")
+                pyautogui.click(click_x, click_y)
+                time.sleep(2)
+                app = _reconnect(app)
+                screen, win, title = identify_screen(app)
 
             screen, win, title = identify_screen(app)
             if screen == "select_patient":

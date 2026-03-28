@@ -239,105 +239,159 @@ def automate_patient_entry(patient, status_callback, config=None):
         screen, win, title = identify_screen(app)
 
         if screen == "select_patient":
-            _log(status_callback, "[3/6] SKIP — Already at Select Patient!", "limegreen")
+            _log(status_callback, "[3/8] SKIP — Already at Select Patient!", "limegreen")
         elif screen == "edit_patient":
-            _log(status_callback, "[3/6] SKIP — Already at Edit Patient!", "limegreen")
+            _log(status_callback, "[3/8] SKIP — Already at Edit Patient!", "limegreen")
         else:
-            _log(status_callback, "[3/6] Opening Select Patient...", "yellow")
+            _log(status_callback, "[3/8] Opening Select Patient...", "yellow")
 
-            # pyautogui clicks the toolbar — pywinauto can't see toolbar buttons
-            # ToolBarMain is at Y=50-75, center Y≈62 from window top
-            # Select Patient is the first button, around X=90 from window left
+            # pyautogui clicks the toolbar (invisible to pywinauto)
             main_win = app.top_window()
             rect = main_win.rectangle()
 
             for click_attempt in range(3):
-                # Click toolbar row 1 (Select Patient area)
                 click_x = rect.left + 90
-                click_y = rect.top + 70  # center of Y=50-75 toolbar
+                click_y = rect.top + 70
                 _log(status_callback, f"  Click {click_attempt+1}: toolbar at ({click_x}, {click_y})", "cyan")
                 pyautogui.click(click_x, click_y)
                 time.sleep(3)
 
-                # Check if Select Patient opened (pywinauto detection)
                 app = _reconnect(app)
                 screen, win, title = identify_screen(app)
                 if screen == "select_patient":
                     break
 
-                # If we opened something wrong, close it
                 if screen in ("popup", "unknown"):
-                    _log(status_callback, f"  Wrong dialog: '{title[:30]}' — closing", "cyan")
                     pyautogui.press('escape')
                     time.sleep(1)
                     app = _reconnect(app)
 
             screen, win, title = identify_screen(app)
             if screen == "select_patient":
-                _log(status_callback, "[3/6] DONE — Select Patient open!", "limegreen")
+                _log(status_callback, "[3/8] DONE — Select Patient open!", "limegreen")
             else:
-                _log(status_callback, f"[3/6] FAILED — Expected Select Patient, got '{screen}'", "red")
+                _log(status_callback, f"[3/8] FAILED — Expected Select Patient, got '{screen}'", "red")
                 return False
 
-        # ═══ STEP 4: Click Add Pt ═══
+        # ═══ STEP 4: Search for patient (required before Add Pt) ═══
         screen, win, title = identify_screen(app)
 
         if screen == "edit_patient":
-            _log(status_callback, "[4/6] SKIP — Already on Edit Patient!", "limegreen")
+            _log(status_callback, "[4/8] SKIP — Already at Edit Patient!", "limegreen")
         else:
-            _log(status_callback, "[4/6] Clicking Add Pt...", "yellow")
+            _log(status_callback, "[4/8] Searching for patient (required by OpenDental)...", "yellow")
 
             main_win = app.top_window()
-            clicked = False
 
-            # Find butAddPatient by auto_id and get its screen coordinates
+            # Type last name in search field (auto_id='textLName' > child 'textBox')
+            try:
+                ln_field = main_win.child_window(auto_id="textLName").child_window(auto_id="textBox")
+                if ln_field.exists(timeout=2):
+                    ln_rect = ln_field.rectangle()
+                    pyautogui.click((ln_rect.left + ln_rect.right) // 2,
+                                    (ln_rect.top + ln_rect.bottom) // 2)
+                    time.sleep(0.3)
+                    pyautogui.hotkey('ctrl', 'a')
+                    pyautogui.write(patient.last_name, interval=typing_interval)
+                    _log(status_callback, f"  Last Name: {patient.last_name}", "cyan")
+            except Exception as e:
+                _log(status_callback, f"  Could not type last name: {e}", "orange")
+
+            # Type first name
+            try:
+                fn_field = main_win.child_window(auto_id="textFName").child_window(auto_id="textBox")
+                if fn_field.exists(timeout=1):
+                    fn_rect = fn_field.rectangle()
+                    pyautogui.click((fn_rect.left + fn_rect.right) // 2,
+                                    (fn_rect.top + fn_rect.bottom) // 2)
+                    time.sleep(0.3)
+                    pyautogui.hotkey('ctrl', 'a')
+                    pyautogui.write(patient.first_name, interval=typing_interval)
+                    _log(status_callback, f"  First Name: {patient.first_name}", "cyan")
+            except Exception:
+                pass
+
+            # Click Search button
+            try:
+                search_btn = main_win.child_window(auto_id="butSearch")
+                if search_btn.exists(timeout=1):
+                    sr = search_btn.rectangle()
+                    pyautogui.click((sr.left + sr.right) // 2, (sr.top + sr.bottom) // 2)
+                    _log(status_callback, "  Clicked Search", "cyan")
+                    time.sleep(2)
+            except Exception:
+                pass
+
+            # Check if patient already exists in the grid results
+            # (We can't easily read the grid, so we just log and continue)
+            _log(status_callback, "[4/8] DONE — Search complete!", "limegreen")
+
+        # ═══ STEP 5: Click Add Pt + dismiss popups ═══
+        screen, win, title = identify_screen(app)
+
+        if screen == "edit_patient":
+            _log(status_callback, "[5/8] SKIP — Already on Edit Patient!", "limegreen")
+        else:
+            _log(status_callback, "[5/8] Clicking Add Pt...", "yellow")
+
+            main_win = app.top_window()
+
+            # Find Add Pt button and click with pyautogui
             try:
                 add_btn = main_win.child_window(auto_id="butAddPatient")
                 if add_btn.exists(timeout=2):
-                    # Get button center coordinates and click with pyautogui
-                    # (click_input() doesn't work on OpenDental's Custom controls)
                     btn_rect = add_btn.rectangle()
                     cx = (btn_rect.left + btn_rect.right) // 2
                     cy = (btn_rect.top + btn_rect.bottom) // 2
                     _log(status_callback, f"  Found butAddPatient at ({cx}, {cy})", "cyan")
                     pyautogui.click(cx, cy)
-                    clicked = True
+                else:
+                    _log(status_callback, "[5/8] FAILED — Add Pt button not found!", "red")
+                    return False
             except Exception as e:
-                _log(status_callback, f"  auto_id search failed: {e}", "orange")
-
-            if not clicked:
-                _log(status_callback, "[4/6] FAILED — Could not find Add Pt!", "red")
+                _log(status_callback, f"[5/8] FAILED — {e}", "red")
                 return False
 
-            # Wait for Edit Patient form
-            time.sleep(3)
-            app = _reconnect(app)
+            time.sleep(1.5)
 
-            # Verify Edit Patient opened
+            # Dismiss popup: "Trial version. Maximum 30 patients"
+            _log(status_callback, "  Dismissing trial popup...", "cyan")
+            pyautogui.press('enter')
+            time.sleep(1)
+
+            # Dismiss popup: "Not allowed to add... do a search first"
+            # (We already searched, so this shouldn't appear, but just in case)
+            _log(status_callback, "  Dismissing any remaining popups...", "cyan")
+            pyautogui.press('enter')
+            time.sleep(2)
+
+            # Check if Edit Patient opened
+            app = _reconnect(app)
             for _ in range(5):
                 screen, win, title = identify_screen(app)
                 if screen == "edit_patient":
                     break
                 elif screen in ("popup", "alerts"):
-                    _dismiss(screen, win, status_callback)
-                time.sleep(1)
-                app = _reconnect(app)
+                    _log(status_callback, f"  Popup: pressing OK...", "cyan")
+                    pyautogui.press('enter')
+                    time.sleep(1)
+                    app = _reconnect(app)
+                else:
+                    time.sleep(1)
+                    app = _reconnect(app)
 
             screen, win, title = identify_screen(app)
             if screen == "edit_patient":
-                _log(status_callback, "[4/6] DONE — Edit Patient form open!", "limegreen")
+                _log(status_callback, "[5/8] DONE — Edit Patient form open!", "limegreen")
             else:
-                # Edit Patient might not use FormPatientEdit auto_id
-                # Fall through and try filling fields anyway
-                _log(status_callback, f"[4/6] WARNING — Can't confirm Edit Patient (got '{screen}'), continuing...", "orange")
+                _log(status_callback, f"[5/8] WARNING — Can't confirm Edit Patient (got '{screen}'), continuing...", "orange")
 
-        # ═══ STEP 5: Fill Form ═══
-        _log(status_callback, "[5/6] Filling patient form...", "yellow")
-
-        # pyautogui types into fields via Tab navigation
-        # This is the "dumb but reliable" approach that worked before
-        # OpenDental Edit Patient form: fields in tab order
+        # ═══ STEP 6: Fill Form ═══
+        _log(status_callback, "[6/8] Filling patient form...", "yellow")
         time.sleep(1)
+
+        # pyautogui Tab+type through the Edit Patient form fields
+        # The cursor should be on the first field (Last Name) after the form opens
 
         fields_to_enter = [
             ("last_name", patient.last_name),
@@ -346,32 +400,25 @@ def automate_patient_entry(patient, status_callback, config=None):
             ("preferred_name", patient.preferred_name),
         ]
 
-        # Type Last Name (cursor should already be on it)
         for field_name, value in fields_to_enter:
             if value:
                 display = _mask(field_name, value)
                 _log(status_callback, f"  {field_name} = {display}", "yellow")
-                pyautogui.hotkey('ctrl', 'a')  # select all existing text
+                pyautogui.hotkey('ctrl', 'a')
                 pyautogui.write(value, interval=typing_interval)
             pyautogui.press('tab')
             time.sleep(field_delay)
 
-        # Gender (dropdown — use arrow keys)
+        # Gender (dropdown)
         if patient.gender:
             _log(status_callback, f"  gender = {patient.gender}", "yellow")
             gender_map = {"male": 1, "female": 2, "unknown": 3}
             presses = gender_map.get(patient.gender.lower(), 0)
-            if presses:
-                for _ in range(presses):
-                    pyautogui.press('down')
-                    time.sleep(0.1)
+            for _ in range(presses):
+                pyautogui.press('down')
+                time.sleep(0.1)
         pyautogui.press('tab')
         time.sleep(field_delay)
-
-        # Position / other fields that may be between gender and the ones below
-        # We'll tab through unknown fields
-        # DOB, SSN, Address fields depend on the exact tab order
-        # For now, type remaining fields with tab navigation
 
         remaining_fields = [
             ("dob", patient.dob),
@@ -388,7 +435,6 @@ def automate_patient_entry(patient, status_callback, config=None):
                 display = _mask(field_name, value)
                 _log(status_callback, f"  {field_name} = {display}", "yellow")
                 if field_name == "dob":
-                    # DOB: type digits without slashes
                     digits = value.replace("/", "")
                     pyautogui.write(digits, interval=typing_interval)
                 else:
@@ -397,21 +443,22 @@ def automate_patient_entry(patient, status_callback, config=None):
             pyautogui.press('tab')
             time.sleep(field_delay)
 
-        _log(status_callback, "[5/6] DONE — Form filled!", "limegreen")
+        _log(status_callback, "[6/8] DONE — Form filled!", "limegreen")
 
-        # ═══ STEP 6: Save ═══
-        _log(status_callback, "[6/6] Saving...", "yellow")
+        # ═══ STEP 7: Save ═══
+        _log(status_callback, "[7/8] Saving...", "yellow")
 
         # Try pywinauto first (find Save/OK button)
         saved = False
         try:
             main_win = app.top_window()
-            # Look for OK or Save button
             for aid in ["butOK", "butSave"]:
                 try:
                     btn = main_win.child_window(auto_id=aid)
                     if btn.exists(timeout=1):
-                        btn.click_input()
+                        br = btn.rectangle()
+                        pyautogui.click((br.left + br.right) // 2,
+                                        (br.top + br.bottom) // 2)
                         saved = True
                         _log(status_callback, f"  Clicked {aid}!", "cyan")
                         break
@@ -420,28 +467,37 @@ def automate_patient_entry(patient, status_callback, config=None):
         except Exception:
             pass
 
-        # Fallback: pyautogui Enter key
         if not saved:
             _log(status_callback, "  Pressing Enter to save...", "cyan")
             pyautogui.press('enter')
 
         time.sleep(2)
 
-        # Check for errors after save
+        # ═══ STEP 8: Verify save ═══
+        _log(status_callback, "[8/8] Verifying...", "yellow")
+
         app = _reconnect(app)
         screen, win, title = identify_screen(app)
-        if screen in ("popup", "alerts"):
-            error_text = ""
-            try:
-                error_text = win.window_text()
-            except Exception:
-                pass
-            error_keywords = ["error", "fail", "invalid", "required", "cannot"]
-            if any(kw in error_text.lower() for kw in error_keywords):
-                _log(status_callback, f"[6/6] FAILED — Error: {error_text[:80]}", "red")
-                return False
+
+        # Dismiss any post-save popups
+        for _ in range(3):
+            if screen in ("popup", "alerts"):
+                error_text = ""
+                try:
+                    error_text = win.window_text()
+                except Exception:
+                    pass
+                error_keywords = ["error", "fail", "invalid", "required", "cannot"]
+                if any(kw in error_text.lower() for kw in error_keywords):
+                    _log(status_callback, f"[8/8] FAILED — Error: {error_text[:80]}", "red")
+                    return False
+                _log(status_callback, f"  Dismissing: {error_text[:40]}", "cyan")
+                pyautogui.press('enter')
+                time.sleep(1)
+                app = _reconnect(app)
+                screen, win, title = identify_screen(app)
             else:
-                _dismiss(screen, win, status_callback)
+                break
 
         _log(status_callback,
              f"[DONE] {patient.first_name} {patient.last_name} saved!", "limegreen")

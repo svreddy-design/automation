@@ -92,16 +92,20 @@ def identify_screen(app):
         if width < 600 and height < 400 and width > 50:
             return "popup", win, title
 
-        # Check if Select Patient panel is open (look for "Add Pt" button)
+        # Check if Select Patient panel is open inside the main window
+        # (OpenDental opens it as a tab, not a separate window)
+        # Use fast child_window search instead of slow descendants() scan
         try:
-            descs = win.descendants(control_type="Button")
-            for btn in descs:
-                try:
-                    btn_text = btn.window_text()
-                    if "Add Pt" in btn_text:
-                        return "select_patient", win, title
-                except Exception:
-                    continue
+            add_pt = win.child_window(title_re=".*Add Pt.*", control_type="Button")
+            if add_pt.exists(timeout=0.5):
+                return "select_patient", win, title
+        except Exception:
+            pass
+        # Also check for Select Patient tab at bottom of window
+        try:
+            sp_tab = win.child_window(title="Select Patient", control_type="TabItem")
+            if sp_tab.exists(timeout=0.3):
+                return "select_patient", win, title
         except Exception:
             pass
 

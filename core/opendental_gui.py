@@ -56,14 +56,28 @@ def identify_screen(app):
         if "Alert" in title and "Alerts" not in title:
             return "alerts", win, title
 
-        # Child forms inside main window (by auto_id)
+        # Check for popup dialogs ON TOP (trial version, errors, confirmations)
+        # These are small separate windows — check all desktop windows
+        from pywinauto import Desktop
         try:
-            sp = win.child_window(auto_id="FormPatientSelect")
-            if sp.exists(timeout=2):
-                return "select_patient", sp, title
+            for dwin in Desktop(backend="uia").windows():
+                try:
+                    dt = dwin.window_text()
+                    dr = dwin.rectangle()
+                    dw = dr.right - dr.left
+                    dh = dr.bottom - dr.top
+                    # Small window that's not the main OD window = popup
+                    if (dw < 600 and dh < 400 and dw > 50 and
+                            "Open Dental" not in dt and "Demo Database" not in dt and
+                            "Practice Management" not in dt):
+                        return "popup", dwin, dt
+                except Exception:
+                    continue
         except Exception:
             pass
 
+        # Check for Edit Patient BEFORE Select Patient
+        # (Edit Patient opens on top of Select Patient)
         try:
             ep = win.child_window(auto_id="FormPatientEdit")
             if ep.exists(timeout=0.5):
@@ -71,13 +85,11 @@ def identify_screen(app):
         except Exception:
             pass
 
-        # Small popup
+        # Select Patient panel
         try:
-            rect = win.rectangle()
-            w = rect.right - rect.left
-            h = rect.bottom - rect.top
-            if w < 600 and h < 400 and w > 50:
-                return "popup", win, title
+            sp = win.child_window(auto_id="FormPatientSelect")
+            if sp.exists(timeout=1):
+                return "select_patient", sp, title
         except Exception:
             pass
 

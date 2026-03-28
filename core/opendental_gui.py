@@ -489,29 +489,43 @@ def automate_patient_entry(patient, status_callback, config=None):
 
             opened = False
 
-            # Strategy 1: Send Ctrl+P directly TO the OpenDental window
-            # (global send_keys fails when bot window is topmost and steals focus)
-            _log(status_callback, "  Sending Ctrl+P to OpenDental window...", "cyan")
+            # Strategy 1: Click "Select Patient" on the first toolbar row
+            # OpenDental toolbar layout:
+            #   Row 1: [icon] Select Patient | Commlog | E-mail | WebMail | ...
+            #   Row 2: Print | Lists | Pat Appts | ...
+            # We must click Row 1, NOT Row 2 (which has Print)
+            # Title bar ~31px + menu bar ~23px = toolbar row 1 starts at ~54px
+            _log(status_callback, "  Clicking Select Patient on toolbar row 1...", "cyan")
             try:
-                win.type_keys('^p')
+                rect = win.rectangle()
+                # Row 1 center: ~65px from window top, ~90px from left
+                toolbar_x = rect.left + 90
+                toolbar_y = rect.top + 65
+                from pywinauto import mouse as pwa_mouse
+                pwa_mouse.click(coords=(toolbar_x, toolbar_y))
+                _log(status_callback, f"  Clicked at ({toolbar_x}, {toolbar_y})", "cyan")
                 time.sleep(2)
                 app = _reconnect(app)
                 screen_check, _, _ = identify_screen(app)
                 if screen_check == "select_patient":
                     opened = True
             except Exception as e:
-                _log(status_callback, f"  type_keys failed: {e}", "orange")
+                _log(status_callback, f"  Toolbar click failed: {e}", "orange")
 
-            # Strategy 2: Try configured locator (SplitButton, Button, etc.)
+            # Strategy 2: If we accidentally opened something else (like Print), close it
             if not opened:
-                btn = find_element(win, locators["select_patient_btn"], status_callback)
-                if btn:
-                    btn.click_input()
-                    opened = True
+                app = _reconnect(app)
+                screen_check, win_check, title_check = identify_screen(app)
+                if screen_check in ("popup", "unknown"):
+                    _log(status_callback, f"  Wrong dialog opened: '{title_check}' — closing...", "cyan")
+                    pwa_keyboard.send_keys('{ESC}')
+                    time.sleep(1)
+                    app = _reconnect(app)
 
-            # Strategy 3: Find ToolBar and use button() method
+            # Strategy 3: Try ToolBar.button() method
             if not opened:
                 try:
+                    win = app.top_window()
                     toolbars = win.descendants(control_type="ToolBar")
                     for tb in toolbars:
                         try:
@@ -525,23 +539,34 @@ def automate_patient_entry(patient, status_callback, config=None):
                 except Exception:
                     pass
 
-            # Strategy 4: Click toolbar area by position (Select Patient = first button)
+            # Strategy 4: Try different Y offsets on toolbar row 1
             if not opened:
-                _log(status_callback, "  Clicking toolbar area...", "cyan")
+                _log(status_callback, "  Trying multiple toolbar positions...", "cyan")
                 try:
                     rect = win.rectangle()
-                    toolbar_x = rect.left + 90
-                    toolbar_y = rect.top + 88
                     from pywinauto import mouse as pwa_mouse
-                    pwa_mouse.click(coords=(toolbar_x, toolbar_y))
-                    _log(status_callback, f"  Clicked toolbar at ({toolbar_x}, {toolbar_y})", "cyan")
-                except Exception as e:
-                    _log(status_callback, f"  Toolbar click failed: {e}", "orange")
+                    # Try Y offsets 58, 62, 68, 72 to find the right row
+                    for y_off in [58, 62, 68, 72]:
+                        pwa_mouse.click(coords=(rect.left + 90, rect.top + y_off))
+                        time.sleep(1.5)
+                        app = _reconnect(app)
+                        screen_check, _, _ = identify_screen(app)
+                        if screen_check == "select_patient":
+                            opened = True
+                            _log(status_callback, f"  Found at Y offset {y_off}!", "cyan")
+                            break
+                        elif screen_check in ("popup", "unknown"):
+                            # Wrong dialog — close and try next offset
+                            pwa_keyboard.send_keys('{ESC}')
+                            time.sleep(0.5)
+                            app = _reconnect(app)
+                except Exception:
+                    pass
 
-            time.sleep(1.5)
+            time.sleep(1)
 
             # Verify we arrived at Select Patient
-            for retry in range(8):
+            for retry in range(5):
                 app = _reconnect(app)
                 app = dismiss_all_dialogs(app, status_callback)
                 screen, win, title = identify_screen(app)
@@ -550,16 +575,6 @@ def automate_patient_entry(patient, status_callback, config=None):
                 elif screen in ("popup", "alerts", "choose_database"):
                     _dismiss(screen, win, status_callback)
                     time.sleep(0.5)
-                elif screen == "main_window" and retry < 3:
-                    # Retry: re-focus and send Ctrl+P directly to window
-                    _log(status_callback, f"  Retry {retry + 1}: re-focus + Ctrl+P...", "cyan")
-                    try:
-                        win.set_focus()
-                        time.sleep(0.3)
-                        win.type_keys('^p')
-                    except Exception:
-                        pass
-                    time.sleep(2)
                 else:
                     time.sleep(0.5)
 

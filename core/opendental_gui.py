@@ -267,6 +267,47 @@ def _reconnect(app):
         return app
 
 
+def dismiss_all_dialogs(app, status_callback, max_rounds=5):
+    """Aggressively dismiss ALL blocking dialogs (Choose Database, alerts, popups).
+    Checks every window, not just top_window, to catch dialogs hiding behind."""
+
+    for _ in range(max_rounds):
+        dismissed = False
+
+        # Check all windows belonging to the app
+        try:
+            for win in app.windows():
+                try:
+                    title = win.window_text()
+                    if "Choose Database" in title:
+                        _dismiss("choose_database", win, status_callback)
+                        dismissed = True
+                    elif "Alert" in title:
+                        _dismiss("alerts", win, status_callback)
+                        dismissed = True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # Also check via top_window
+        screen, win, title = identify_screen(app)
+        if screen in ("choose_database", "alerts", "popup"):
+            _dismiss(screen, win, status_callback)
+            dismissed = True
+
+        if not dismissed:
+            break
+
+        time.sleep(1)
+        try:
+            app = _reconnect(app)
+        except Exception:
+            pass
+
+    return app
+
+
 # ═══════════════════════════════════════════════════
 #  DUPLICATE CHECK — idempotency
 # ═══════════════════════════════════════════════════
@@ -387,6 +428,8 @@ def automate_patient_entry(patient, status_callback, config=None):
             _log(status_callback, f"  Attempt {attempt + 1}: screen='{screen}' title='{title[:40]}'", "cyan")
 
             if screen == "main_window":
+                # Dismiss any lurking dialogs (Choose Database, alerts) before proceeding
+                app = dismiss_all_dialogs(app, status_callback)
                 _log(status_callback, "[2/7] DONE — At main screen!", "limegreen")
                 break
             elif screen == "select_patient":
@@ -437,12 +480,17 @@ def automate_patient_entry(patient, status_callback, config=None):
             # Verify we arrived at Select Patient
             for _ in range(5):
                 app = _reconnect(app)
+                app = dismiss_all_dialogs(app, status_callback)
                 screen, win, title = identify_screen(app)
                 if screen == "select_patient":
                     break
-                elif screen in ("popup", "alerts"):
+                elif screen in ("popup", "alerts", "choose_database"):
                     _dismiss(screen, win, status_callback)
                     time.sleep(0.5)
+                elif screen == "main_window":
+                    # Dialog dismissed but Select Patient didn't open — retry shortcut
+                    pwa_keyboard.send_keys('^p')
+                    time.sleep(action_delay)
                 else:
                     time.sleep(0.5)
 
@@ -498,10 +546,11 @@ def automate_patient_entry(patient, status_callback, config=None):
             # Verify we arrived at Edit Patient
             for _ in range(5):
                 app = _reconnect(app)
+                app = dismiss_all_dialogs(app, status_callback)
                 screen, win, title = identify_screen(app)
                 if screen == "edit_patient":
                     break
-                elif screen in ("popup", "alerts"):
+                elif screen in ("popup", "alerts", "choose_database"):
                     _dismiss(screen, win, status_callback)
                     time.sleep(0.5)
                 else:

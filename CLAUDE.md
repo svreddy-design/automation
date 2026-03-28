@@ -2,7 +2,7 @@
 
 ## Purpose
 Desktop GUI automation bot for OpenDental dental practice management software.
-Enters patient demographic data via pywinauto GUI automation. **Windows-only.**
+Enters patient demographic data via hybrid pywinauto + pyautogui automation. **Windows-only.**
 
 ## Quick Start
 ```
@@ -12,7 +12,7 @@ python app.py
 
 ## Architecture
 - `app.py` — CustomTkinter GUI, launches automation threads, human-in-the-loop confirmation
-- `core/opendental_gui.py` — The "paranoid agent": pywinauto-based automation with verification
+- `core/opendental_gui.py` — Hybrid agent: pywinauto for detection + pyautogui for typing/clicks
 - `core/opendental.py` — Timing config, element locator config, path detection utilities
 - `core/patient.py` — Patient dataclass with validation and PHI masking
 - `core/csv_import.py` — CSV reader for batch import with resume support

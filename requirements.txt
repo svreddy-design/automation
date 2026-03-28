@@ -3,4 +3,5 @@ python-docx==1.2.0
 pyinstaller==6.19.0
 packaging==25.0
 pywinauto
+pyautogui
 playwright
